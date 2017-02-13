@@ -1,6 +1,6 @@
 From iris.proofmode Require Import tactics.
 From iris.heap_lang Require Import lang notation proofmode.
-From iris.prelude Require Import list.
+From iris.prelude Require Import list listset_nodup.
 From iris.program_logic Require Import hoare.
 
 Close Scope Z_scope.
@@ -11,6 +11,11 @@ Section HashTable.
 
   Variables make_array array_load array_store modulo: val.
 
+  (* 
+     Abstract predicate describing that a value represents a constant sized array.
+     The interpretation of (array arr l) is that arr represent an array containing the values
+     in the list l.
+   *)
   Variable array : val -> list val -> iProp Σ.
 
   Hypothesis modulo_spec:
@@ -30,6 +35,15 @@ Section HashTable.
   Notation "e1 .[ e2 ]" := (array_load (e1, e2)%E) (at level 20): expr_scope.
   Notation "e1 .[ e2 ] := e3" := (array_store (e1, e2, e3)%E) (at level 20): expr_scope.
 
+  (* 
+     Hashtables are parameterized with a Hashable object,
+     which defines the key type as well as the hash function and equality relation.
+     Unlike in Pottiers CFML version, the Key type is not a direct reflection of program values, 
+     but can be any coq-level type. Thus, each logical key value can represent any number of program values.
+     Therefore we do not need a logical relation for equivalence over keys to be specified, but instead use Leibniz equality.
+     Since the equal function should define an equivalence relation for program values,
+     the logical Key type should represent the set of equivalence classes defined by said relation.
+   *)
   Structure Hashable := mkHashable {
     equal : val;
     hash : val;
@@ -39,7 +53,13 @@ Section HashTable.
     key_countable : Countable Key;
     Hash : Key -> nat;
     as_key : val -> option Key;
-    
+
+    equal_spec (k1 k2: Key) (v1 v2: val) :
+      as_key v1 = Some k1 ->
+      as_key v2 = Some k2 ->
+      WP equal v1 v2 {{u, ⌜u = #(bool_decide (k1 = k2))⌝}}%I;
+
+    (*
     equal_spec_true (k: Key) (v1 v2: val) :
       as_key v1 = Some k ->
       as_key v2 = Some k ->
@@ -48,6 +68,7 @@ Section HashTable.
     equal_spec_false k1 k2 v1 v2 :
       (k1 ≠ k2) -> as_key v1 = Some k1 -> as_key v2 = Some k2 ->
       WP equal v1 v2 {{u, ⌜u = #false⌝}}%I;
+    *)
 
     hash_spec k v : as_key v = Some k -> WP hash v {{u, ⌜u = #(Hash k)⌝}}%I;
   }.
@@ -134,8 +155,8 @@ Section HashTable.
                       let: "size" := #1 + !(Snd(Fst "t")) in
                       Snd(Fst "t") <- "size" ;;
                       let: "cap" := !(Snd "t") in
-                      (*if:  "cap" + "cap" < "size" then
-                        resize "t" else *) #().
+                      if:  "cap" + "cap" < "size" then
+                        resize "t" else #().
                                                  
     Definition lookup_impl : val :=
       λ: "t" "k", let: "i" := index "t" "k" in
@@ -372,6 +393,204 @@ Section HashTable.
         apply HNG ; done.
     Qed.
 
+    Definition is_domain (D :listset_nodup (Key K)) M :=
+      forall k, k ∉ D -> M k = [].
+  
+    Instance is_domain_proper : Proper ((≡) ==> (=) ==> (iff)) is_domain.
+    Proof.
+      intros ? ? Hequiv ? ? <-.
+      split.  intros HDom k. rewrite -elem_of_proper. apply HDom. done. done.
+      intros HDom k. rewrite elem_of_proper.  apply HDom. done. done.
+    Qed.
+      
+    Lemma is_domain_subset D D' M :
+      D ⊆ D' ->
+      is_domain D M -> is_domain D' M.
+    Proof.
+      intros Hsubset Hdom k Hk.
+      apply Hdom.
+      set_solver.
+    Qed.
+      
+      
+    Lemma is_domain_insert D M k x :
+      is_domain D M ->
+      is_domain ({[k]} ∪ D) (<[k := x]>M).
+    Proof.
+      intros Hdom k' Hk'.
+      setoid_rewrite not_elem_of_union in Hk'. inversion Hk' as [Hk'k Hk'D].
+      unfold base.insert. unfold insertM.
+      rewrite decide_False ;[by apply Hdom|].
+      by apply not_elem_of_singleton in Hk'k.
+    Qed.
+
+    Definition collection_sum_with `{Elements A C} (f : A -> nat) : C -> nat :=
+      collection_fold (fun a n => n + f a) 0.
+
+    Instance collection_sum_with_proper `{FinCollection A C} (f : A -> nat) : Proper ((≡) ==> (=)) (collection_sum_with f : C -> nat).
+    Proof.
+      unfold collection_sum_with.
+      apply (collection_fold_proper).
+      apply eq_equivalence.
+      solve_proper.
+      intros. lia.
+    Qed.
+
+    Lemma collection_sum_with_empty `{FinCollection A C} f :
+      collection_sum_with f ∅ = 0.
+    Proof.
+      unfold collection_sum_with, collection_fold. simpl.
+      rewrite elements_empty. done.
+    Qed.
+      
+    Lemma collection_sum_with_singleton_union `{FinCollection A C} x D f :
+      x ∉ D ->
+      collection_sum_with f ({[x]} ∪ D) = f x + collection_sum_with f D.
+    Proof.
+      intro. 
+      unfold collection_sum_with, collection_fold. simpl.
+      rewrite (foldr_permutation (=) (λ (a : A) (n : nat), n + f a) 0 _ (elements ({[x]} ∪ D))(x :: elements D)) ; [|intros ; lia|] .
+      simpl. lia.
+      by apply elements_union_singleton.
+    Qed.
+
+    Lemma collection_sum_with_subseteq_le `{FinCollection A C} `{forall x D, Decision (x ∈ D)} (D1 D2 : C) f :
+      D1 ⊆ D2 ->
+      collection_sum_with f D1 ≤ collection_sum_with f D2. 
+    Proof.
+      apply (collection_ind
+               (fun D1 => forall D2,
+                    D1 ⊆ D2 ->
+                    collection_sum_with f D1 ≤ collection_sum_with f D2)). 
+      { intros ? ? Heq. apply forall_proper. intros.
+        rewrite subseteq_proper ; [|done..].
+        by rewrite (collection_sum_with_proper f _ _ Heq ).
+      }
+      - clear D1 D2.
+        intros D2 _. rewrite collection_sum_with_empty. lia.
+      - clear D1 D2.
+        intros x D1 Hx IH D2 Hsubset.
+        rewrite (union_difference {[x]} D2) ; [|set_solver].
+        rewrite collection_sum_with_singleton_union.
+        rewrite collection_sum_with_singleton_union.
+        assert (D1 ⊆ D2 ∖ {[x]}) as Hsubset'. set_solver.
+        specialize (IH (D2 ∖ {[x]}) Hsubset').
+        lia. set_solver. assumption.
+    Qed.
+      
+      
+
+    Lemma collection_sum_with_union `{FinCollection A C} `{forall x D, Decision (x ∈ D)} D1 D2 f :
+      collection_sum_with f (D1 ∪ D2) =
+      (collection_sum_with f D1 + collection_sum_with f D2) - collection_sum_with f (D1 ∩ D2).
+    Proof.
+      apply (collection_ind (fun D => collection_sum_with f (D ∪ D2) =
+      (collection_sum_with f D + collection_sum_with f D2) - collection_sum_with f (D ∩ D2))).
+      {
+        intros X Y ?. rewrite union_proper ; [|done..].
+        rewrite intersection_proper ; [|done..].
+        by rewrite (collection_sum_with_proper _ X Y).
+      }
+      - rewrite intersection_empty_l union_empty_l collection_sum_with_empty .
+        lia.
+      - intros x D HnIn IH.
+        rewrite collection_sum_with_singleton_union ; [|assumption].
+
+        destruct (decide (x ∈ D2)) as [HD2|HD2].
+        + rewrite {1}[{[x]} ∪ D]union_comm -union_assoc (subseteq_union_1 {[x]} D2).
+          rewrite intersection_union_r. rewrite (subseteq_intersection_1 {[x]} D2).
+          rewrite collection_sum_with_singleton_union.
+          rewrite IH. lia.
+          rewrite not_elem_of_intersection. by left.
+          apply elem_of_subseteq_singleton. assumption.
+          apply elem_of_subseteq_singleton. assumption.
+        + rewrite -union_assoc.
+          rewrite collection_sum_with_singleton_union.
+          rewrite intersection_union_r. rewrite (_:{[x]} ∩ D2 ≡ ∅).
+          rewrite union_empty_l. rewrite IH.
+          pose proof (collection_sum_with_subseteq_le (D ∩ D2) D f (intersection_subseteq_l _ _)).
+          lia. set_solver. set_solver.
+    Qed.
+
+    Lemma collection_sum_with_domains `{FinCollection A C} D f g :
+      (forall x, x ∈ D -> f x = g x) ->
+      collection_sum_with f D = collection_sum_with g D.
+    Proof.
+      apply (collection_ind (fun D => (forall x, x ∈ D -> f x = g x) ->
+      collection_sum_with f D = collection_sum_with g D)).
+      { intros ? ? Heq.
+        rewrite (collection_sum_with_proper f _ _ Heq).
+        rewrite (collection_sum_with_proper g _ _ Heq).
+        split. intros Hother Hdom. apply Hother. intro. rewrite elem_of_proper ;[|done..]. apply Hdom.
+        intros Hother Hdom. apply Hother. intro. rewrite elem_of_proper ;[|done..]. apply Hdom.
+      }
+      - intro. rewrite collection_sum_with_empty.
+        symmetry. apply collection_sum_with_empty.
+      - clear D. intros x D Hx IH Hdom. 
+        rewrite collection_sum_with_singleton_union ; [|assumption].
+        rewrite collection_sum_with_singleton_union ; [|assumption].
+        rewrite Hdom ; [|set_solver].
+        rewrite IH. done.
+        intros ? ?. apply Hdom. set_solver.
+    Qed.        
+      
+    Definition population (D : listset_nodup (Key K)) M :=
+      collection_sum_with (length ∘ M) D.
+
+    Instance population_proper : Proper ((≡) ==> (=) ==> (=)) population.
+    Proof.
+      intros ? ? ? ? ? <-.
+      unfold population.
+      by apply collection_sum_with_proper.
+    Qed.
+
+    Instance listset_nodup_dec_elem_of `{EqDecision A} x (C : listset_nodup A) : Decision (x ∈ C) :=
+      elem_of_list_dec x (elements C).
+
+
+    
+    Lemma population_insert D M k x:
+      is_domain D M ->
+      population ({[k]} ∪ D) (<[k := x]>M) = S (population D M).
+    Proof.
+
+        (*unfold population.
+        apply (collection_fold_ind
+                 (fun a D => is_domain D M -> a = S (population D M))
+                 (fun k' a => a + length ((<[k := x]>M) k')) 0).
+        { intros ? ? <- D1 D2 ?.
+          rewrite is_domain_proper ; [|done..].
+          by rewrite (population_proper D1 D2 _  M M _). }
+        unfold population. simpl.*)
+      
+      destruct (decide (k ∈ D)) as [Hin |Hnin].
+      - pose proof Hin as Hrewrite.
+        apply elem_of_subseteq_singleton in Hrewrite.
+        apply subseteq_union_1 in Hrewrite.
+        rewrite Hrewrite.
+        intro.
+        rewrite (union_difference {[k]} D) ; [|apply elem_of_subseteq_singleton ; assumption].
+        unfold population.
+        rewrite collection_sum_with_singleton_union.
+        rewrite collection_sum_with_singleton_union.
+        unfold base.insert, insertM.  simpl. rewrite decide_True ; [|reflexivity]. simpl.
+        rewrite (collection_sum_with_domains _ (length ∘ M) (length ∘ (λ k' : Key K, if decide (k = k') then x :: M k' else M k'))). reflexivity.
+        intros k' Hk'. simpl.
+        rewrite decide_False. reflexivity.
+        contradict Hk'.
+        1-3: apply not_elem_of_difference ; right ; by apply elem_of_singleton.
+      - intro Hdom.
+        unfold population, base.insert, insertM.
+        rewrite collection_sum_with_singleton_union ; [|assumption].
+        simpl. rewrite decide_True ; [|reflexivity].
+        rewrite Hdom ; [|assumption]. simpl.
+        rewrite (collection_sum_with_domains _ (length ∘ M) (length ∘ (λ k' : Key K, if decide (k = k') then x :: M k' else M k'))). reflexivity.
+        intros x' ?. simpl.
+        rewrite decide_False. reflexivity.
+        intros <-. contradiction.
+    Qed.
+ 
+    
     (*
     Lemma size_equivalence M data data' :
       content M data ->
@@ -384,20 +603,21 @@ Section HashTable.
     Proof.
       *)
       
-    Definition TableInState M (lData : loc) (data: list BucketData) (t : val) : iProp Σ:=
+    Definition TableInState M D (lData : loc) (data: list BucketData) (t : val) : iProp Σ:=
       ( ⌜length data > 0⌝ ∗
         ⌜content M data⌝ ∗
         ⌜no_garbage data⌝ ∗
         ⌜have_keys data⌝ ∗
+        ⌜is_domain D M⌝ ∗
         ∃ (lSize lCap : loc) arr,
           ⌜t = (#lData, #lSize, #lCap)%V⌝ ∗
           array arr (fmap bucket data) ∗
           lData ↦ arr ∗
-          lSize ↦ #(sum_list_with length data)%nat ∗
+          lSize ↦ #(population D M)%nat ∗
           lCap ↦ #(length data))%I.
 
     Definition Table M (t : val) : iProp Σ :=
-      (∃ l data, TableInState M l data t)%I.
+      (∃ D l data, TableInState M D l data t)%I.
 
     Lemma map_replicate `(x : A) `(f : A -> B) n : map f (replicate n x) = replicate n (f x).
     Proof.
@@ -448,22 +668,23 @@ Section HashTable.
       wp_alloc lArr as "HlArr".
       wp_alloc lSize as "HlSize".
       wp_alloc lCap as "HlCap".
-      iExists lArr, (replicate n []).
+      iExists ∅, lArr, (replicate n []).
 
       iSplit. iPureIntro. by rewrite replicate_length.
       iSplit. iPureIntro. apply content_empty.
       iSplit. iPureIntro. apply no_garbage_empty.
       iSplit. iPureIntro. apply have_keys_empty.
+      iSplit. by iPureIntro.
       iExists lSize, lCap, arr.
       iSplit. done.
       iSplitL "Harr".
       by rewrite fmap_replicate.
       iFrame.
-      iSplitL "HlSize".
+(*      iSplitL "HlSize".
       clear Hn.
       assert (0 = sum_list_with length (replicate n ([] : BucketData))) as Hsize.
       { induction n as [|n IH]. done. simpl. by rewrite -IH. }
-      by rewrite -Hsize.
+      by rewrite -Hsize.*)
       by rewrite replicate_length.
     Qed.
 
@@ -692,7 +913,7 @@ Section HashTable.
       {{{Table M t}}} resize t {{{ RET #(); Table M t }}}.
     Proof.
       iIntros (Φ) "HTable HΦ".
-      iDestruct "HTable" as (lData data) "[% [% [% [% HTable]]]]".
+      iDestruct "HTable" as (D lData data) "[% [% [% [% [% HTable]]]]]".
       iDestruct "HTable" as (lSize lCap arr) "[% [Harr [HlData [HlSize HlCap]]]]".
       iSimplifyEq.
       wp_lam.
@@ -730,29 +951,21 @@ Section HashTable.
       rewrite fmap_replicate.
       iFrame.
       iIntros (data'') "[HlData [HlCap [HnewArr [Harr [% [% [% %]]]]]]]".
-      rename H7 into HLen.
+      rename H8 into HLen.
       iApply "HΦ".
-      iExists lData, data''.
+      iExists D, lData, data''.
       iSplit. iPureIntro.
       rewrite HLen replicate_length. lia.
+      iSplit. done.
       iSplit. done.
       iSplit. done.
       iSplit. done.
       iExists lSize, lCap, newArr.
       iSplit. done.
       iFrame.
-
-      assert (forall M data data',
-                 content M data ->
-                 no_garbage data ->
-                 have_keys data ->
-                 content M data' ->
-                 no_garbage data' ->
-                 have_keys data' ->
-                 sum_list_with length data = sum_list_with length data').
-      
-      *)
-
+      Unshelve.
+      all: done.
+    Qed.
 
       
     Lemma sum_list_with_insert `(f : A -> nat) l i x y :
@@ -779,7 +992,7 @@ Section HashTable.
     Proof.
       intro HKey.
       iIntros (Φ) "HTable HΦ".
-      iDestruct "HTable" as (lArr data) "[% [% [% [% HTable]]]]".
+      iDestruct "HTable" as (D lArr data) "[% [% [% [% [% HTable]]]]]".
       iDestruct "HTable" as (lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
       iSimplifyEq.
       do 3 wp_lam.
@@ -816,8 +1029,11 @@ Section HashTable.
       wp_proj.
       wp_load.
       wp_lam.
-      iApply "HΦ".
-      iExists lArr,  (insertData data k' (k, x)). 
+      do 2 wp_op.
+      intro.
+      wp_if.
+      wp_apply (resize_spec (#lArr, #lSize, #lCap) with "[-HΦ]").
+      iExists ({[k']} ∪ D ). iExists lArr,  (insertData data k' (k, x)).
       iSplit. iPureIntro.
       by rewrite insert_length.
       iSplit. iPureIntro.
@@ -826,6 +1042,7 @@ Section HashTable.
       by apply no_garbage_insert.
       iSplit. iPureIntro.
       apply have_keys_insert ; [assumption|assumption].
+      iSplit. iPureIntro. by apply is_domain_insert.
       iExists lSize, lCap, arr. 
       iSplit ; [done|].
       iSplitL "Harr".
@@ -837,17 +1054,39 @@ Section HashTable.
       iFrame.
       iFrame.
       iSplitL "HlSize".
+      rewrite population_insert ; [|assumption].
+      rewrite (_:((1 + Z.of_nat(population D M))%Z = (Z.of_nat (S (population D M))))) ; [|lia].
+      iFrame.
+      unfold insertData.
+      rewrite insert_length.
+      iFrame.
+      iApply "HΦ".
+      intro.
+      wp_if.
+      iApply "HΦ".
+      iExists ({[k']} ∪ D ). iExists lArr,  (insertData data k' (k, x)). 
+      iSplit. iPureIntro.
+      by rewrite insert_length.
+      iSplit. iPureIntro.
+      by apply content_insert.
+      iSplit. iPureIntro.
+      by apply no_garbage_insert.
+      iSplit. iPureIntro.
+      apply have_keys_insert ; [assumption|assumption].
+      iSplit. iPureIntro. by apply is_domain_insert.
+      iExists lSize, lCap, arr. 
+      iSplit ; [done|].
+      iSplitL "Harr".
       unfold insertData.
       unfold lookupData.
+      rewrite list_fmap_insert.
       rewrite HSome.
       simpl.
-      rewrite (sum_list_with_insert _ _ _ _ _ HSome).
-      simpl.
-      assert (1 + sum_list_with length data =
-              sum_list_with length data + S (length l) - length l) as HLenEq; [lia|].
-      rewrite -(Z2Nat.id 1) ; [|done].
-      rewrite Z2Nat.inj_pos. rewrite Pos2Nat.inj_1. rewrite -inj_plus.
-      rewrite -HLenEq.
+      iFrame.
+      iFrame.
+      iSplitL "HlSize".
+      rewrite population_insert ; [|assumption].
+      rewrite (_:((1 + Z.of_nat(population D M))%Z = (Z.of_nat (S (population D M))))) ; [|lia].
       iFrame.
       unfold insertData.
       rewrite insert_length.
