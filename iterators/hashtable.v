@@ -175,6 +175,32 @@ Section HashTable.
                        end
                   in "lookup_buck" (!(Fst "t")).["i"].
 
+    Definition fold_buck : val :=
+      rec: "fold_buck" "f" "b" "a" :=
+        match: "b" with
+          NONE => "a"
+        | SOME "b"
+          => let: "k" := Fst (Fst "b") in
+             let: "x" := Snd (Fst "b") in
+             let: "b" := Snd "b" in
+             let: "a" := "f" "k" "x" in
+             "fold_buck" "f" "b" "a"
+        end.
+
+    Definition fold_loop : val :=
+      rec: "fold_loop" "i" "f" "t" "a"  :=
+        if: "i" < !(Snd "t") then
+          let: "b" := !(Fst (Fst "t")).["i"] in
+          let: "a" := fold_buck "f" "b" "a" in
+          "fold_loop" ("i" + #1) "f" "t" "a"
+        else
+          "a".
+    
+    Definition fold_impl : val :=
+      λ: "f" "t" "a",
+        fold_loop #0 "f" "t" "a".
+    
+    
     Implicit Type M : Key K -> list val.
 
     Instance insertM: Insert (Key K) (val) (Key K -> list val) :=
@@ -182,6 +208,18 @@ Section HashTable.
                       then x :: M k'
                       else M k'.
 
+    Definition removeM k M :=
+      fun k' => if decide (k = k')
+                then tail (M k')
+                else M k'.
+
+    Inductive removal : (Key K -> list val) -> (list (val * val)) -> (Key K -> list val) -> Prop :=
+    | RemovalNil {M} : removal M [] M
+    | RemovalCons {k k' x l M M''} :
+        as_key K k = Some k' ->
+        head (M k') = Some x ->
+        removal (removeM k' M) l M'' ->
+        removal M ((k, x) :: l) M''.
     
 
     Definition BucketData := list (val * val).
@@ -553,16 +591,6 @@ Section HashTable.
       is_domain D M ->
       population ({[k]} ∪ D) (<[k := x]>M) = S (population D M).
     Proof.
-
-        (*unfold population.
-        apply (collection_fold_ind
-                 (fun a D => is_domain D M -> a = S (population D M))
-                 (fun k' a => a + length ((<[k := x]>M) k')) 0).
-        { intros ? ? <- D1 D2 ?.
-          rewrite is_domain_proper ; [|done..].
-          by rewrite (population_proper D1 D2 _  M M _). }
-        unfold population. simpl.*)
-      
       destruct (decide (k ∈ D)) as [Hin |Hnin].
       - pose proof Hin as Hrewrite.
         apply elem_of_subseteq_singleton in Hrewrite.
@@ -1091,7 +1119,71 @@ Section HashTable.
       unfold insertData.
       rewrite insert_length.
       iFrame.
-    Qed.      
+    Qed.
+
+    Definition permitted M seq :=
+      exists M', removal M seq M'.
+
+    Definition complete M seq :=
+      removal M seq (const []).
+
+
+    Lemma fold_loop_spec M M' seq I (f a t : val) D lArr data i :
+      (forall k x seq a',
+          permitted M (seq ++ [(k,x)]) ->
+          {{I seq a'}} f k x {{v, I (seq ++ [(k,x)]) v }}%I) ->
+      removal M seq M' ->
+      {{{TableInState M D lArr data t ∗ I seq a}}}
+        fold_loop #i f t a
+        {{{seq' v , RET v; ⌜removal M seq' (fun k => if decide (Hash K k mod length data < i)
+                                                     then M k
+                                                     else [])⌝ ∗
+                            TableInState M D lArr data t ∗ I seq' v}}}.
+    Proof.
+      intros Hf Hseq.
+      iIntros (Φ).
+      iLöb as "IH" forall (i).
+      iIntros "[[% [% [% [% [% HTable]]]]] Hseq] HΦ".
+      iDestruct "HTable" as (lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
+      iSimplifyEq.
+      wp_rec.
+      do 3 wp_lam.
+      wp_proj.
+      wp_load.
+      wp_op.
+      - intro Hi.
+        wp_if.
+        do 2 wp_proj.
+        wp_load.
+        assert (exists b, (bucket <$> data) !! i = Some b) as HSome.
+        { apply lookup_lt_is_Some. rewrite fmap_length. lia. }
+        destruct HSome as [b HSome].
+        wp_apply (array_load_spec _ _ _ i HSome with "Harr").
+        iIntros "Harr".
+        wp_lam.
+        
+        
+      
+    Lemma fold_impl_spec M I (f t a : val) :
+      (forall k x seq a',
+          permitted M (seq ++ [(k,x)]) ->
+          {{I seq a'}} f k x {{v,I (seq ++ [(k,x)]) v }}%I) ->
+      {{{Table M t ∗ I [] a}}} fold_impl f t a {{{v seq, RET v; ⌜complete M seq⌝ ∗ I seq v}}}.
+    Proof.
+      intros Hf.
+      iIntros (Φ) "[HTable HInv] HΦ".
+      iDestruct "HTable" as (D lArr data) "[% [% [% [% [% HTable]]]]]".
+      iDestruct "HTable" as (lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
+      iSimplifyEq.
+      do 3 wp_lam.
+      do 2 wp_proj.
+      wp_load.
+      wp_lam.
+      wp_proj.
+      wp_load.
+      wp_lam.
+      
+      
       
   End Implementation.
   
