@@ -173,7 +173,7 @@ Section HashTable.
                             else
                               "lookup_buck" "b'"
                        end
-                  in "lookup_buck" (!(Fst "t")).["i"].
+                  in "lookup_buck" ((!(Fst (Fst "t"))).["i"]).
 
     Definition fold_buck : val :=
       rec: "fold_buck" "f" "b" "a" :=
@@ -1281,6 +1281,72 @@ Qed.
       iFrame.
     Qed.
 
+    Lemma lookup_impl_spec M D lArr data t k k' :
+      as_key K k = Some k' ->
+      {{{TableInState M D lArr data t}}}
+        lookup_impl t k
+        {{{ RET match head (M k') with Some v => SOMEV v | None => NONEV end ; TableInState M D lArr data t }}}.
+    Proof.
+      intro HKey.
+      iIntros (Φ) "[% [% [% [% [% HTable]]]]] HΦ".
+      assert (content M data) as HContent. assumption.
+      assert (have_keys data) as HKeys. assumption.
+      iDestruct "HTable" as (lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
+      iSimplifyEq.
+      do 2 wp_lam.
+      wp_apply (index_spec _ _ _ _ _ (bucket <$> data) HKey with "[HlCap]"). by rewrite fmap_length.
+      rewrite fmap_length.
+      iIntros "HlCap".
+      do 2 wp_lam. do 2 wp_proj. wp_load.
+      assert (exists b, data !! (Hash K k' `mod` length data) = Some b) as [b Hb].
+      { apply lookup_lt_is_Some_2. apply mod_bound_pos. lia. assumption. }
+      assert ((bucket <$> data) !! (Hash K k' `mod` length data) = Some (bucket b)) as HBucket.
+      { by rewrite list_lookup_fmap Hb. }
+      Check (array_load_spec _ _ _ _ HBucket).
+      wp_apply (array_load_spec _ _ _ _ HBucket with "Harr").
+      iIntros "Harr".
+      Print have_keys.
+      assert (forall b, M k' = snd <$> (bucket_filter k' b) ->
+                        Forall (λ '(k, _), is_Some (as_key K k)) b ->
+                        WP (rec: "lookup_buck" "b" :=
+                              match: "b" with
+                                NONE => NONE
+                              | SOME "a"
+                                => let: "k'" := Fst (Fst "a") in
+                                   let: "x" := Snd (Fst "a") in
+                                   let: "b'" := Snd "a" in
+                                   if: (equal K) k "k'" then
+                                     SOME "x"
+                                   else
+                                     "lookup_buck" "b'"
+                              end) (bucket b)
+                           {{ v,  ⌜v = match head (M k') with
+                                         Some v => SOMEV v
+                                       | None => NONEV end⌝ }}%I) as loop_spec.
+      { clear dependent b. intros b HM HKeysb. iInduction b as [|[k'' x] b IH] "IH".
+        - wp_rec. wp_match. by rewrite HM.
+        - apply Forall_cons in HKeysb. destruct HKeysb as [[k''' HKey'] Hkeysb].
+
+          wp_rec. wp_match. do 2 wp_proj. wp_lam. do 2 wp_proj. wp_lam. wp_proj. wp_lam.
+          wp_bind (equal _ _ _ ).
+          iApply wp_wand.
+          iApply (equal_spec _ _ _ _ _ HKey HKey').
+          iIntros (v) "?".
+          iSimplifyEq.
+          case_bool_decide.
+          + wp_if. rewrite HM. unfold bucket_filter, filter. simpl.
+            rewrite decide_True. done. by simplify_eq.
+          + wp_if. apply IH. rewrite HM. unfold bucket_filter, filter. simpl.
+            rewrite decide_False. done. rewrite HKey'. by injection. assumption.
+      }
+      iApply wp_wand. iApply loop_spec. rewrite HContent. unfold lookupData. by rewrite Hb.
+      apply (Forall_lookup_1 _ _ _ _ HKeys Hb).
+      iIntros (v) "%". simplify_eq. iApply "HΦ".
+      do 5 (iSplit ; [done|]).
+      iExists lSize, lCap, arr.
+      iSplit. done. iFrame.
+    Qed.
+      
     Definition permitted M seq :=
       exists M', removal M seq M'.
 
