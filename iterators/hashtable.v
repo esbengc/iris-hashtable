@@ -2,39 +2,23 @@ From iris.proofmode Require Import tactics.
 From iris.heap_lang Require Import lang notation proofmode.
 From iris.prelude Require Import list listset_nodup.
 From iris.program_logic Require Import hoare.
+Require Import util array.
+
+Print Options.
 
 Close Scope Z_scope.
 
 Section HashTable.
+
   
-  Context `{heapG Σ}.
+  Context `{!heapG Σ} `{!Array Σ}.
 
-  Variables make_array array_load array_store modulo: val.
+  Variable modulo: val.
 
-  (* 
-     Abstract predicate describing that a value represents a constant sized array.
-     The interpretation of (array arr l) is that arr represent an array containing the values
-     in the list l.
-   *)
-  Variable array : val -> list val -> iProp Σ.
 
   Hypothesis modulo_spec:
     forall (m n : Z), WP modulo (#m, #n) {{v, ⌜v = #(m `mod` n)⌝}}%I.
-
-  Hypothesis make_array_spec:
-    forall (n : nat) (v : val), WP make_array (#n, v) {{arr, array arr (replicate n v)}}%I.
-
-  Hypothesis array_load_spec:
-    forall arr xs v (n : nat),
-      xs !! n = Some v -> {{{array arr xs}}} array_load (arr, #n) {{{ RET v;array arr xs}}}.
-
-  Hypothesis array_store_spec:
-    forall arr xs (v : val) (n : nat),
-      n < length xs -> {{{array arr xs}}} array_store (arr, #n, v) {{{ RET #() ; array arr (<[n := v]> xs)}}}.
-
-  Notation "e1 .[ e2 ]" := (array_load (e1, e2)%E) (at level 20): expr_scope.
-  Notation "e1 .[ e2 ] := e3" := (array_store (e1, e2, e3)%E) (at level 20): expr_scope.
-
+  
   (* 
      Hashtables are parameterized with a Hashable object,
      which defines the key type as well as the hash function and equality relation.
@@ -45,53 +29,40 @@ Section HashTable.
      the logical Key type should represent the set of equivalence classes defined by said relation.
    *)
   Structure Hashable := mkHashable {
-    equal : val;
-    hash : val;
+    equalf : val;
+    hashf : val;
                             
     Key : Type;
     key_eq : EqDecision Key;
-    key_countable : Countable Key;
     Hash : Key -> nat;
     as_key : val -> option Key;
 
     equal_spec (k1 k2: Key) (v1 v2: val) :
       as_key v1 = Some k1 ->
       as_key v2 = Some k2 ->
-      WP equal v1 v2 {{u, ⌜u = #(bool_decide (k1 = k2))⌝}}%I;
+      WP equalf v1 v2 {{u, ⌜u = #(bool_decide (k1 = k2))⌝}}%I;
 
-    (*
-    equal_spec_true (k: Key) (v1 v2: val) :
-      as_key v1 = Some k ->
-      as_key v2 = Some k ->
-      WP equal v1 v2 {{u, ⌜u = #true⌝}}%I;
-
-    equal_spec_false k1 k2 v1 v2 :
-      (k1 ≠ k2) -> as_key v1 = Some k1 -> as_key v2 = Some k2 ->
-      WP equal v1 v2 {{u, ⌜u = #false⌝}}%I;
-    *)
-
-    hash_spec k v : as_key v = Some k -> WP hash v {{u, ⌜u = #(Hash k)⌝}}%I;
+    hash_spec k v : as_key v = Some k -> WP hashf v {{u, ⌜u = #(Hash k)⌝}}%I;
   }.
 
-  Existing Instances key_eq key_countable.
+  Existing Instances key_eq.
 
-  Structure HashTable (K : Hashable) := hashTable {
-    create : val;
-    insert : val;
-    lookup : val;
-    
-  }.
-
+  Arguments Hash {_} _.
+  Arguments as_key {_} _.
+  Arguments equal_spec {_}.
+  Arguments hash_spec {_}.
   
   Section Implementation.
     Context (K: Hashable).
-    
+
+    Local Notation equal := (equalf K).
+    Local Notation hash := (hashf K).
 
     Definition create_impl : val :=
       λ: "n" , (ref (make_array ("n", NONE)), ref #0, ref "n").
 
     Definition index : val :=
-      λ: "t" "k", modulo (hash K "k", !(Snd "t")).
+      λ: "t" "k", modulo (hash "k", !(Snd "t")).
 
 
     Definition mv_buck : val :=
@@ -168,7 +139,7 @@ Section HashTable.
                          => let: "k'" := Fst (Fst "a") in
                             let: "x" := Snd (Fst "a") in
                             let: "b'" := Snd "a" in
-                            if: (equal K) "k" "k'" then
+                            if: equal "k" "k'" then
                               SOME "x"
                             else
                               "lookup_buck" "b'"
@@ -199,6 +170,21 @@ Section HashTable.
     Definition fold_impl : val :=
       λ: "f" "t" "a",
         fold_loop #0 "f" "t" "a".
+
+    Definition cascade_next : val :=
+      rec: "next" "b" "t" "i" :=
+        match: "b" with
+          NONE => let: "i" := "i" + #1 in
+                  if: "i" < !(Snd "t")
+                  then "next" ((!(Fst (Fst "t"))).["i"]) "t" "i"
+                  else NONE
+        | SOME "b" => SOME ((Fst (Fst "b"), Snd (Fst "b")),
+                       λ: <>, "next" (Snd "b") "t" "i")
+        end.
+    
+    Definition cascade_impl : val :=
+      λ: "t", let: "b" := (!(Fst (Fst "t"))).[#0] in
+              λ: <>, cascade_next "b" "t" #0. 
     
     
     Implicit Type M : Key K -> list val.
@@ -216,21 +202,12 @@ Section HashTable.
     Inductive removal : (Key K -> list val) -> (list (val * val)) -> (Key K -> list val) -> Prop :=
     | RemovalNil {M M'} : (forall k, M k = M' k) -> removal M [] M'
     | RemovalCons {k k' x l M M' M''} :
-        as_key K k = Some k' ->
+        as_key k = Some k' ->
         head (M k') = Some x ->
         (forall k'', M' k'' = removeM k' M k'') ->
         removal M' l M'' ->
         removal M ((k, x) :: l) M''.
     
-  (*  Instance removal_Proper : Proper ((fun M M' => (forall k, M k = M' k)) ==> (=) ==> (fun M M' => (forall k, M k = M' k)) ==> (↔)) removal.
-    Proof.
-      intros M1 M2 HM1M2 l ? <- M1' M2' HM1M2'. revert M1 M2 HM1M2.
-      induction l. 
-      split ; intro Hrem ; inversion Hrem ; constructor ; congruence.
-      split ; intro Hrem ; inversion Hrem ; simplify_eq ; econstructor.
-      done. congruence. done. Search functional_extentionality.
-      specialize (IHl M' (removeM k' M2) H5) as [left  right]. apply right.*)
-
     Lemma removal_equiv_1 M M' M'' seq :
       (forall k, M k = M' k) ->
       removal M seq M'' ->
@@ -290,22 +267,22 @@ Qed.
       | (k, x) :: tl => SOMEV (k, x, bucket tl)
       end.
 
-    Definition lookupData `(data : list (list A)) k :=
+    Definition lookup_data `(data : list (list A)) (k : Key K) :=
       from_option id []
-                  (data !! (Hash K k mod length data)).
+                  (data !! (Hash k mod length data)).
 
-    Definition insertData `(data : list (list A)) k x :=
-      <[(Hash K k mod length data) := x :: lookupData data k ]> data.
+    Definition insert_data `(data : list (list A)) k x :=
+      <[(Hash k mod length data) := x :: lookup_data data k ]> data.
 
-    Fixpoint bucket_remove k (b : BucketData) :=
+    Fixpoint bucket_remove (k : Key K) (b : BucketData) :=
       match b with
       | [] => []
-      | (k', x) :: b => if decide (as_key K k' = Some k)
+      | (k', x) :: b => if decide (as_key k' = Some k)
                         then b else (k', x) :: bucket_remove k b
       end.
 
-    Definition bucket_filter k (b : BucketData) :=
-      filter (fun '(k', _) => as_key K k' = Some k) b.
+    Definition bucket_filter (k : Key K) (b : BucketData) :=
+      filter (fun '(k', _) => as_key k' = Some k) b.
 
     Lemma bucket_filter_remove k b :
       tail (bucket_filter k b) = bucket_filter k (bucket_remove k b).
@@ -325,32 +302,32 @@ Qed.
       - reflexivity.
       - simpl. case_decide.
         +  unfold bucket_filter, filter, list_filter. rewrite decide_False. done.
-          rewrite (_:as_key K k'' = Some k). by injection. assumption. 
+          rewrite (_:as_key k'' = Some k). by injection. assumption. 
         + simpl. unfold bucket_filter, filter, list_filter. case_decide.
           * unfold bucket_filter in IH. by rewrite IH.
           * done.
     Qed.
         
     Lemma lookup_mod `(data : list (list A)) k k' :
-      Hash K k mod length data = Hash K k' mod length data ->
-      lookupData data k = lookupData data k'.
+      Hash k mod length data = Hash k' mod length data ->
+      lookup_data data k = lookup_data data k'.
     Proof.
       intros Hmod.
-      unfold lookupData.
+      unfold lookup_data.
       rewrite Hmod.
       f_equal.
     Qed.
       
     Lemma lookup_insert_data `(data : list (list A)) k k' x :
       0 < length data ->
-      Hash K k mod length data = Hash K k' mod length data ->
-      lookupData (insertData data k' x) k = x :: lookupData data k.
+      Hash k mod length data = Hash k' mod length data ->
+      lookup_data (insert_data data k' x) k = x :: lookup_data data k.
     Proof.
       intros Hlen Hmod.
-      unfold insertData.
+      unfold insert_data.
       rewrite (lookup_mod _ _ _ Hmod).
       rewrite -Hmod.
-      unfold lookupData at 1.
+      unfold lookup_data at 1.
       rewrite insert_length.
       rewrite Hmod.
       rewrite list_lookup_insert ; [done|].
@@ -361,15 +338,15 @@ Qed.
 
     Lemma lookup_insert_data_other `(data : list (list A)) k k' x :
       0 < length data ->
-      Hash K k mod length data ≠ Hash K k' mod length data ->
-      lookupData (insertData data k' x) k = lookupData data k.
+      Hash k mod length data ≠ Hash k' mod length data ->
+      lookup_data (insert_data data k' x) k = lookup_data data k.
     Proof.
       intros Hlen Hmod.
-      unfold insertData.
-      unfold lookupData at 1.
+      unfold insert_data.
+      unfold lookup_data at 1.
       rewrite insert_length.
       rewrite list_lookup_insert_ne ; [|done].
-      by unfold lookupData.
+      by unfold lookup_data.
     Qed.
 
     Lemma list_fmap_insert `(f: A -> B) (l : list A) i x :
@@ -403,13 +380,13 @@ Qed.
       forall k,
         M k
         = snd <$> (bucket_filter k
-                                 (lookupData data k)).
+                                 (lookup_data data k)).
 
     Lemma content_empty n :
       content (const []) (replicate n []).
     Proof.
       intro k.
-      unfold lookupData.
+      unfold lookup_data.
       destruct (decide (0 = n)) as [<-|].
       done.
       rewrite lookup_replicate_2.
@@ -421,9 +398,9 @@ Qed.
       
     Lemma content_insert M data k k' x:
       0 < length data ->
-      as_key K k' = Some k ->
+      as_key k' = Some k ->
       content M data ->
-      content (<[k := x]> M) (insertData data k (k', x)).
+      content (<[k := x]> M) (insert_data data k (k', x)).
     Proof.
       intros Hlen HKey HContent k''.
       unfold base.insert at 1.
@@ -435,7 +412,7 @@ Qed.
         simpl.
         rewrite HContent.
         done.
-      - destruct (decide (Hash K k mod length data = Hash K k'' mod length data)).
+      - destruct (decide (Hash k mod length data = Hash k'' mod length data)).
         + rewrite lookup_insert_data ; [| done ..].
           unfold bucket_filter, filter, list_filter.
           rewrite decide_False. by rewrite HContent.
@@ -447,24 +424,24 @@ Qed.
       0 < length data ->
       content M data ->
       content (removeM k M)
-              (<[Hash K k mod length data
-                 := bucket_remove k (lookupData data k)]>data).
+              (<[Hash k mod length data
+                 := bucket_remove k (lookup_data data k)]>data).
     Proof.
       intros Hlen HContent k'.
-      assert (Hash K k' `mod` length data < length data).
+      assert (Hash k' `mod` length data < length data).
       { apply mod_bound_pos. lia. assumption. }
-      unfold removeM. rewrite HContent. unfold lookupData.
+      unfold removeM. rewrite HContent. unfold lookup_data.
       case_decide.
       - simplify_eq. rewrite -fmap_tail.
         by rewrite bucket_filter_remove insert_length list_lookup_insert. 
-      - destruct (decide (Hash K k `mod` length data = Hash K k' `mod` length data)) as [Heq|Hne].
+      - destruct (decide (Hash k `mod` length data = Hash k' `mod` length data)) as [Heq|Hne].
         + rewrite Heq insert_length list_lookup_insert.
           by rewrite -bucket_filter_remove_ne. assumption.
         + by rewrite insert_length list_lookup_insert_ne.
     Qed.
     
     Definition have_keys (data : list BucketData) :=
-      Forall (fun b => Forall (fun '(k, _) => is_Some (as_key K k)) b) data.
+      Forall (fun b => Forall (fun '(k, _) => is_Some (@as_key K k)) b) data.
 
     Lemma have_keys_empty n :
       have_keys (replicate n []).
@@ -478,21 +455,17 @@ Qed.
     Qed.      
       
     Lemma have_keys_insert data k k' x:
-      as_key K k' = Some k ->
+      as_key k' = Some k ->
       have_keys data ->
-      have_keys (insertData data k (k', x)).
+      have_keys (insert_data data k (k', x)).
     Proof.
       intros HKey Hdata.
-    (*  unfold insertData.
-      unfold have_keys.
-      unfold lookupData.
-      eauto using Forall_insert, Forall_lookup, Forall_cons. *)
       apply Forall_insert ; [assumption|].
       apply Forall_cons.
       split.
       by exists k.
-      unfold lookupData.
-      destruct (decide ((Hash K k mod length data) < length data)) as [Hlt|Hge].
+      unfold lookup_data.
+      destruct (decide ((Hash k mod length data) < length data)) as [Hlt|Hge].
       destruct (lookup_lt_is_Some_2 _ _ Hlt) as [b Hb].
       rewrite Hb. simpl.
       apply (Forall_lookup_1 _ _ _ _ Hdata Hb).
@@ -502,8 +475,8 @@ Qed.
     Qed.
 
     Lemma Forall_keys_remove_bucket k b :
-      Forall (λ '(k, _), is_Some (as_key K k)) b ->
-      Forall (λ '(k, _), is_Some (as_key K k)) (bucket_remove k b).
+      Forall (λ '(k, _), is_Some (@as_key K k)) b ->
+      Forall (λ '(k, _), is_Some (@as_key K k)) (bucket_remove k b).
     Proof.
       induction b as [|[k' x] b IH] .
       - intro. by apply Forall_nil.
@@ -514,15 +487,15 @@ Qed.
         + apply Forall_cons. auto.
     Qed.
 
-    Lemma have_keys_remove data k:
+    Lemma have_keys_remove data (k : Key K):
       have_keys data ->
-      have_keys (<[Hash K k mod length data := bucket_remove k (lookupData data k)]> data).
+      have_keys (<[Hash k mod length data := bucket_remove k (lookup_data data k)]> data).
     Proof.
       intro HKeys.
       destruct (decide (0 < length data)).
       - apply Forall_insert. assumption.
-        unfold lookupData.
-        assert (exists b, data !! (Hash K k `mod` length data) = Some b) as [b Hb].
+        unfold lookup_data.
+        assert (exists b, data !! (Hash k `mod` length data) = Some b) as [b Hb].
         { apply lookup_lt_is_Some. apply mod_bound_pos. lia. assumption. }
         rewrite Hb. simpl.
         apply Forall_keys_remove_bucket.
@@ -535,7 +508,7 @@ Qed.
     Definition no_garbage (data : list BucketData) :=
       forall i k,
         i < length data -> 
-        i ≠ Hash K k mod length data ->
+        i ≠ Hash k mod length data ->
         [] = snd <$> (bucket_filter k
                                     (from_option
                                        id []
@@ -550,15 +523,15 @@ Qed.
     Qed.
       
     Lemma no_garbage_insert data k k' x :
-      as_key K k' = Some k ->
+      as_key k' = Some k ->
       no_garbage data ->
-      no_garbage (insertData data k (k', x)).
+      no_garbage (insert_data data k (k', x)).
     Proof.
       intros Hkey HNG i k'' Hlen Hi.
-      unfold insertData in Hi.
+      unfold insert_data in Hi.
       rewrite insert_length in Hi Hlen.
-      unfold insertData.
-      destruct (decide (i = Hash K k mod length data)).
+      unfold insert_data.
+      destruct (decide (i = Hash k mod length data)).
       - simplify_eq.
         rewrite list_lookup_insert ; [|done].
         simpl. unfold bucket_filter, filter, list_filter.
@@ -575,13 +548,13 @@ Qed.
 
     Lemma no_garbage_remove data k:
       no_garbage data ->
-      no_garbage (<[Hash K k mod length data := bucket_remove k (lookupData data k)]> data).
+      no_garbage (<[Hash k mod length data := bucket_remove k (lookup_data data k)]> data).
     Proof.
       intros HNG i k' Hlen Hi.
       rewrite insert_length in Hlen.
-      destruct (decide (i = Hash K k `mod` length data)) as [->|].
-      - unfold lookupData.
-        assert (exists b, data !! (Hash K k `mod` length data) = Some b) as [b Hb].
+      destruct (decide (i = Hash k `mod` length data)) as [->|].
+      - unfold lookup_data.
+        assert (exists b, data !! (Hash k `mod` length data) = Some b) as [b Hb].
         { apply lookup_lt_is_Some. apply mod_bound_pos ; lia. }
         rewrite Hb list_lookup_insert.
         rewrite -bucket_filter_remove_ne. rewrite -Hb. apply HNG.
@@ -623,115 +596,6 @@ Qed.
       by apply not_elem_of_singleton in Hk'k.
     Qed.
 
-    Definition collection_sum_with `{Elements A C} (f : A -> nat) : C -> nat :=
-      collection_fold (fun a n => n + f a) 0.
-
-    Instance collection_sum_with_proper `{FinCollection A C} (f : A -> nat) : Proper ((≡) ==> (=)) (collection_sum_with f : C -> nat).
-    Proof.
-      unfold collection_sum_with.
-      apply (collection_fold_proper).
-      apply eq_equivalence.
-      solve_proper.
-      intros. lia.
-    Qed.
-
-    Lemma collection_sum_with_empty `{FinCollection A C} f :
-      collection_sum_with f ∅ = 0.
-    Proof.
-      unfold collection_sum_with, collection_fold. simpl.
-      rewrite elements_empty. done.
-    Qed.
-      
-    Lemma collection_sum_with_singleton_union `{FinCollection A C} x D f :
-      x ∉ D ->
-      collection_sum_with f ({[x]} ∪ D) = f x + collection_sum_with f D.
-    Proof.
-      intro. 
-      unfold collection_sum_with, collection_fold. simpl.
-      rewrite (foldr_permutation (=) (λ (a : A) (n : nat), n + f a) 0 _ (elements ({[x]} ∪ D))(x :: elements D)) ; [|intros ; lia|] .
-      simpl. lia.
-      by apply elements_union_singleton.
-    Qed.
-
-    Lemma collection_sum_with_subseteq_le `{FinCollection A C} `{forall x D, Decision (x ∈ D)} (D1 D2 : C) f :
-      D1 ⊆ D2 ->
-      collection_sum_with f D1 ≤ collection_sum_with f D2. 
-    Proof.
-      apply (collection_ind
-               (fun D1 => forall D2,
-                    D1 ⊆ D2 ->
-                    collection_sum_with f D1 ≤ collection_sum_with f D2)). 
-      { intros ? ? Heq. apply forall_proper. intros.
-        rewrite subseteq_proper ; [|done..].
-        by rewrite (collection_sum_with_proper f _ _ Heq ).
-      }
-      - clear D1 D2.
-        intros D2 _. rewrite collection_sum_with_empty. lia.
-      - clear D1 D2.
-        intros x D1 Hx IH D2 Hsubset.
-        rewrite (union_difference {[x]} D2) ; [|set_solver].
-        rewrite collection_sum_with_singleton_union.
-        rewrite collection_sum_with_singleton_union.
-        assert (D1 ⊆ D2 ∖ {[x]}) as Hsubset'. set_solver.
-        specialize (IH (D2 ∖ {[x]}) Hsubset').
-        lia. set_solver. assumption.
-    Qed.
-      
-      
-
-    Lemma collection_sum_with_union `{FinCollection A C} `{forall x D, Decision (x ∈ D)} D1 D2 f :
-      collection_sum_with f (D1 ∪ D2) =
-      (collection_sum_with f D1 + collection_sum_with f D2) - collection_sum_with f (D1 ∩ D2).
-    Proof.
-      apply (collection_ind (fun D => collection_sum_with f (D ∪ D2) =
-      (collection_sum_with f D + collection_sum_with f D2) - collection_sum_with f (D ∩ D2))).
-      {
-        intros X Y ?. rewrite union_proper ; [|done..].
-        rewrite intersection_proper ; [|done..].
-        by rewrite (collection_sum_with_proper _ X Y).
-      }
-      - rewrite intersection_empty_l union_empty_l collection_sum_with_empty .
-        lia.
-      - intros x D HnIn IH.
-        rewrite collection_sum_with_singleton_union ; [|assumption].
-
-        destruct (decide (x ∈ D2)) as [HD2|HD2].
-        + rewrite {1}[{[x]} ∪ D]union_comm -union_assoc (subseteq_union_1 {[x]} D2).
-          rewrite intersection_union_r. rewrite (subseteq_intersection_1 {[x]} D2).
-          rewrite collection_sum_with_singleton_union.
-          rewrite IH. lia.
-          rewrite not_elem_of_intersection. by left.
-          apply elem_of_subseteq_singleton. assumption.
-          apply elem_of_subseteq_singleton. assumption.
-        + rewrite -union_assoc.
-          rewrite collection_sum_with_singleton_union.
-          rewrite intersection_union_r. rewrite (_:{[x]} ∩ D2 ≡ ∅).
-          rewrite union_empty_l. rewrite IH.
-          pose proof (collection_sum_with_subseteq_le (D ∩ D2) D f (intersection_subseteq_l _ _)).
-          lia. set_solver. set_solver.
-    Qed.
-
-    Lemma collection_sum_with_domains `{FinCollection A C} D f g :
-      (forall x, x ∈ D -> f x = g x) ->
-      collection_sum_with f D = collection_sum_with g D.
-    Proof.
-      apply (collection_ind (fun D => (forall x, x ∈ D -> f x = g x) ->
-      collection_sum_with f D = collection_sum_with g D)).
-      { intros ? ? Heq.
-        rewrite (collection_sum_with_proper f _ _ Heq).
-        rewrite (collection_sum_with_proper g _ _ Heq).
-        split. intros Hother Hdom. apply Hother. intro. rewrite elem_of_proper ;[|done..]. apply Hdom.
-        intros Hother Hdom. apply Hother. intro. rewrite elem_of_proper ;[|done..]. apply Hdom.
-      }
-      - intro. rewrite collection_sum_with_empty.
-        symmetry. apply collection_sum_with_empty.
-      - clear D. intros x D Hx IH Hdom. 
-        rewrite collection_sum_with_singleton_union ; [|assumption].
-        rewrite collection_sum_with_singleton_union ; [|assumption].
-        rewrite Hdom ; [|set_solver].
-        rewrite IH. done.
-        intros ? ?. apply Hdom. set_solver.
-    Qed.        
       
     Definition population (D : listset_nodup (Key K)) M :=
       collection_sum_with (length ∘ M) D.
@@ -742,11 +606,6 @@ Qed.
       unfold population.
       by apply collection_sum_with_proper.
     Qed.
-
-    Instance listset_nodup_dec_elem_of `{EqDecision A} x (C : listset_nodup A) : Decision (x ∈ C) :=
-      elem_of_list_dec x (elements C).
-
-
     
     Lemma population_insert D M k x:
       is_domain D M ->
@@ -779,34 +638,22 @@ Qed.
         intros <-. contradiction.
     Qed.
  
-    
-    (*
-    Lemma size_equivalence M data data' :
-      content M data ->
-      no_garbage data ->
-      have_keys data ->
-      content M data' ->
-      no_garbage data' ->
-      have_keys data' ->
-      sum_list_with length data = sum_list_with length data'.
-    Proof.
-      *)
-      
-    Definition TableInState M D (lData : loc) (data: list BucketData) (t : val) : iProp Σ:=
+         
+    Definition TableInState M D (data: list BucketData) (t : val) : iProp Σ:=
       ( ⌜length data > 0⌝ ∗
         ⌜content M data⌝ ∗
         ⌜no_garbage data⌝ ∗
         ⌜have_keys data⌝ ∗
         ⌜is_domain D M⌝ ∗
-        ∃ (lSize lCap : loc) arr,
-          ⌜t = (#lData, #lSize, #lCap)%V⌝ ∗
+        ∃ (lArr lSize lCap : loc) arr,
+          ⌜t = (#lArr, #lSize, #lCap)%V⌝ ∗
           array arr (fmap bucket data) ∗
-          lData ↦ arr ∗
+          lArr ↦ arr ∗
           lSize ↦ #(population D M)%nat ∗
           lCap ↦ #(length data))%I.
 
     Definition Table M (t : val) : iProp Σ :=
-      (∃ D l data, TableInState M D l data t)%I.
+      (∃ D data, TableInState M D data t)%I.
 
     Lemma map_replicate `(x : A) `(f : A -> B) n : map f (replicate n x) = replicate n (f x).
     Proof.
@@ -857,35 +704,30 @@ Qed.
       wp_alloc lArr as "HlArr".
       wp_alloc lSize as "HlSize".
       wp_alloc lCap as "HlCap".
-      iExists ∅, lArr, (replicate n []).
+      iExists ∅, (replicate n []).
 
       iSplit. iPureIntro. by rewrite replicate_length.
       iSplit. iPureIntro. apply content_empty.
       iSplit. iPureIntro. apply no_garbage_empty.
       iSplit. iPureIntro. apply have_keys_empty.
       iSplit. by iPureIntro.
-      iExists lSize, lCap, arr.
+      iExists lArr, lSize, lCap, arr.
       iSplit. done.
       iSplitL "Harr".
       by rewrite fmap_replicate.
       iFrame.
-(*      iSplitL "HlSize".
-      clear Hn.
-      assert (0 = sum_list_with length (replicate n ([] : BucketData))) as Hsize.
-      { induction n as [|n IH]. done. simpl. by rewrite -IH. }
-      by rewrite -Hsize.*)
       by rewrite replicate_length.
     Qed.
 
     Lemma index_spec (lArr lSize lCap : loc) (k : val) k' (data : list val) :
-      as_key K k = Some k' -> {{{lCap ↦ #(length data)}}} index (#lArr, #lSize, #lCap) k {{{RET #(Hash K k' mod length data)%nat ; lCap ↦ #(length data)}}}.
+      @as_key K k = Some k' -> {{{lCap ↦ #(length data)}}} index (#lArr, #lSize, #lCap) k {{{RET #(Hash k' mod length data)%nat ; lCap ↦ #(length data)}}}.
     Proof.
       intro HKey.
       iIntros (Φ) "HlCap HΦ".
       do 2 wp_lam.
-      wp_bind (hash _ _).
+      wp_bind (hash _).
       iApply (wp_wand).
-      iApply (hash_spec _ _ _ HKey).
+      iApply (hash_spec _ _ HKey).
       iIntros (h) "%".
       iSimplifyEq.
       wp_proj.
@@ -896,27 +738,7 @@ Qed.
       iSimplifyEq.
       rewrite Z2Nat_inj_mod.
       by iApply ("HΦ").
-    Qed.      
-     (* iIntros "!# [% [% [% HTable]]]".
-      iDestruct "HTable" as (lSize lCap arr) "[% [Harr [HlData [HlSize HlCap]]]]".
-      do 2 wp_lam.
-      wp_bind (hash _ _).
-      iApply (wp_wand).
-      iApply (hash_spec K k' k HKey).
-      iIntros (h) "Hh".
-      iSimplifyEq.
-      wp_proj.
-      wp_load.
-      iApply (wp_wand).
-      iApply (modulo_spec).
-      iIntros (f) "Hf".
-      iSplit. done.
-      iSplit. done.
-      iSplit. done.
-      iSplit. done.
-      iExists lSize, lCap, arr.
-      by iFrame.
-    Qed.*)
+    Qed.
 
         
     Lemma mv_buck_spec M data arr (lArr lSize lCap : loc) b :
@@ -924,7 +746,7 @@ Qed.
       no_garbage data ->
       have_keys data ->
       0 < length data ->
-      Forall (fun '(k, x) => is_Some (as_key K k)) b ->  
+      Forall (fun '(k, x) => is_Some (@as_key K k)) b ->  
       {{{ array arr (bucket <$> data) ∗ lArr ↦ arr ∗ lCap ↦ #(length data) }}}
         mv_buck ((#lArr, #lSize, #lCap), (bucket b))
         {{{ M' data', RET #() ; array arr (bucket <$> data') ∗
@@ -966,7 +788,7 @@ Qed.
         wp_lam.
         wp_apply (IH _ with "HPre").
         iIntros (M' data') "[Harr [HlArr [HlCap [% [% [% [% %]]]]]]]".
-        rename H6 into HLenEq.
+        assert (length data = length data') as HLenEq. assumption.
         wp_lam.
         wp_apply (index_spec _ _ _ _ k (bucket <$> data) _ with "[HlCap]").
         rewrite fmap_length. rewrite HLenEq. iFrame.
@@ -976,12 +798,12 @@ Qed.
         wp_load.
         do 2 wp_proj.
         wp_load.
-        assert (Hash K k `mod` length (bucket <$> data) < length data') as HLenFmap.
+        assert (Hash k `mod` length (bucket <$> data) < length data') as HLenFmap.
         { rewrite -HLenEq. rewrite fmap_length. apply mod_bound_pos. lia. done. }
-        assert (exists l, data' !! (Hash K k `mod` length (bucket <$> data)) = Some l) as HSome.
+        assert (exists l, data' !! (Hash k `mod` length (bucket <$> data)) = Some l) as HSome.
         by apply lookup_lt_is_Some_2.
         destruct HSome as [l HSome].
-        pose proof (list_lookup_fmap bucket data' (Hash K k `mod` length (bucket <$> data))) as HBucket.
+        pose proof (list_lookup_fmap bucket data' (Hash k `mod` length (bucket <$> data))) as HBucket.
         rewrite HSome in HBucket.
         simpl in HBucket.
         wp_apply (array_load_spec _  _ _ _ HBucket with "Harr").
@@ -989,10 +811,10 @@ Qed.
         rewrite -(fmap_length bucket) in HLenFmap.
         wp_apply (array_store_spec _ _ (SOMEV (k', x, bucket l)) _ HLenFmap with "Harr").
         iIntros "Harr".
-        iApply ("HΦ" $! (<[k := x]> M') (insertData data' k (k',x))).
+        iApply ("HΦ" $! (<[k := x]> M') (insert_data data' k (k',x))).
         iSplitL "Harr".
         rewrite list_fmap_insert.
-        unfold lookupData.
+        unfold lookup_data.
         rewrite fmap_length HLenEq in HSome.
         rewrite HSome.
         simpl.
@@ -1000,7 +822,7 @@ Qed.
         iApply "Harr".
         iFrame.
         iSplit.
-        unfold insertData.
+        unfold insert_data.
         by rewrite insert_length fmap_length HLenEq.
         iSplit. iPureIntro.
         intro k''.
@@ -1017,7 +839,7 @@ Qed.
         iSplit. iPureIntro.
         apply have_keys_insert ; assumption.
         iPureIntro.
-        unfold insertData. rewrite HLenEq. symmetry. apply insert_length.
+        unfold insert_data. rewrite HLenEq. symmetry. apply insert_length.
         Unshelve. assumption.
         assumption.
     Qed.        
@@ -1028,7 +850,7 @@ Qed.
       no_garbage data ->
       have_keys data ->
       0 < length data -> 
-      content (fun k => if decide (Hash K k mod length data < i)
+      content (fun k => if decide (Hash k mod length data < i)
                            then M k
                         else [])  data' ->
       no_garbage data' ->
@@ -1064,21 +886,23 @@ Qed.
         pose proof (Forall_lookup_1 _ _ _ _ HKeysData HSome) as HKeysb.
         wp_apply (mv_buck_spec _ _ new lArr lSize lCap _ HContentData' HNGdata' HKeysData' HLenData' HKeysb with "[Hnew HlArr HlCap]").
         iFrame.
-        iIntros (M'' data'') "[Hnew [HlArr [HlCap [% [% [% [% %]]]]]]]".        
+        iIntros (M'' data'') "[Hnew [HlArr [HlCap [% [% [% [% %]]]]]]]".
+        assert (∀ k : Key K, M'' k = (bucket_filter k b).*2 ++ (if decide (Hash k `mod` length data < i) then M k else [])) as HM''. assumption.
+        assert (content M'' data'') as HContentData''. assumption.
         wp_lam.
         wp_op.
         rewrite (_ : (i+1)%Z = (S i)) ; [|lia].
-        assert (content (λ k : Key K, if decide (Hash K k `mod` length data < S i) then M k else []) data'') as HContentData''.
+        assert (content (λ k : Key K, if decide (Hash k `mod` length data < S i) then M k else []) data'').
         { intro k.
-          destruct (decide (Hash K k mod length data < S i)).
-          + rewrite -H1 H0.
-            destruct (decide (Hash K k mod length data < i)).
+          destruct (decide (Hash k mod length data < S i)).
+          + rewrite -HContentData'' HM''.
+            destruct (decide (Hash k mod length data < i)).
             * rewrite (_ :b = from_option id [] (data !! i)) ; [|by rewrite HSome].
               unfold bucket_filter. rewrite -HNGdata ; [done|lia..].
-            * rewrite (_: i = Hash K k `mod` length data) in HSome ;[|lia].
-              rewrite HContentData. unfold lookupData, bucket_filter. 
+            * rewrite (_: i = Hash k `mod` length data) in HSome ;[|lia].
+              rewrite HContentData. unfold lookup_data, bucket_filter. 
               rewrite HSome. symmetry. apply app_nil_r.
-          + rewrite -H1 H0. rewrite decide_False ; [|lia].
+          + rewrite -HContentData'' HM''. rewrite decide_False ; [|lia].
             rewrite (_ :b = from_option id [] (data !! i)) ; [|by rewrite HSome].
             rewrite -HNGdata ; [done|lia..].
         }
@@ -1091,7 +915,7 @@ Qed.
         iFrame.
         iSplit. iPureIntro. 
         intro k. rewrite -HContentData'. rewrite decide_True ; [reflexivity|].
-        assert (Hash K k `mod` length data < length data). apply mod_bound_pos ; lia. lia.
+        assert (Hash k `mod` length data < length data). apply mod_bound_pos ; lia. lia.
         auto.
     Qed.
         
@@ -1101,31 +925,21 @@ Qed.
       {{{Table M t}}} resize t {{{ RET #(); Table M t }}}.
     Proof.
       iIntros (Φ) "HTable HΦ".
-      iDestruct "HTable" as (D lData data) "[% [% [% [% [% HTable]]]]]".
-      iDestruct "HTable" as (lSize lCap arr) "[% [Harr [HlData [HlSize HlCap]]]]".
+      iDestruct "HTable" as (D data) "[% [% [% [% [% HTable]]]]]".
+      iDestruct "HTable" as (lArr lSize lCap arr) "[% [Harr [HlData [HlSize HlCap]]]]".
       iSimplifyEq.
-      wp_lam.
-      do 2 wp_proj.
-      wp_load.
-      wp_lam.
-      wp_proj.
-      wp_load.
-      wp_lam.
-      do 2 wp_proj.
-      wp_op.
+      wp_lam. do 2 wp_proj. wp_load. wp_lam. wp_proj. wp_load.
+      wp_lam. do 2 wp_proj. wp_op.
       rewrite -Nat2Z.inj_add.
       wp_bind (make_array _).
       iApply (wp_wand).
       iApply (make_array_spec (length data + length data) NONEV).
       iIntros (newArr) "HnewArr".
-      wp_store.
-      wp_proj.
-      wp_op.
-      wp_store.
-      assert (content (λ k : Key K, if decide (Hash K k `mod` length data < 0) then M k else [])
+      wp_store. wp_proj. wp_op. wp_store.
+      assert (content (λ k : Key K, if decide (Hash k `mod` length data < 0) then M k else [])
                       (replicate (length data + length data) [])) as HContent'.
       { intro k. setoid_rewrite decide_False ; [|lia].
-        unfold lookupData.
+        unfold lookup_data.
         rewrite lookup_replicate_2.
         done.
         rewrite replicate_length.
@@ -1138,17 +952,14 @@ Qed.
       rewrite replicate_length -Nat2Z.inj_add.
       rewrite fmap_replicate.
       iFrame.
-      iIntros (data'') "[HlData [HlCap [HnewArr [Harr [% [% [% %]]]]]]]".
-      rename H8 into HLen.
+      iIntros (data'') "[HlArr [HlCap [HnewArr [Harr [% [% [% %]]]]]]]".
+      assert (length data'' = length (replicate (length data + length data) ([] : BucketData))) as HLen. assumption.
       iApply "HΦ".
-      iExists D, lData, data''.
+      iExists D, data''.
       iSplit. iPureIntro.
       rewrite HLen replicate_length. lia.
-      iSplit. done.
-      iSplit. done.
-      iSplit. done.
-      iSplit. done.
-      iExists lSize, lCap, newArr.
+      do 4 (iSplit ; [done|]).
+      iExists lArr, lSize, lCap, newArr.
       iSplit. done.
       iFrame.
       Unshelve.
@@ -1176,12 +987,12 @@ Qed.
     Qed.
       
     Lemma insert_impl_spec (t k x : val) M k' :
-      as_key K k = Some k' -> {{{Table M t}}} insert_impl t k x {{{RET #(); Table (<[k' := x]>M) t}}}.
+      as_key k = Some k' -> {{{Table M t}}} insert_impl t k x {{{RET #(); Table (<[k' := x]>M) t}}}.
     Proof.
       intro HKey.
       iIntros (Φ) "HTable HΦ".
-      iDestruct "HTable" as (D lArr data) "[% [% [% [% [% HTable]]]]]".
-      iDestruct "HTable" as (lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
+      iDestruct "HTable" as (D data) "[% [% [% [% [% HTable]]]]]".
+      iDestruct "HTable" as (lArr lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
       iSimplifyEq.
       do 3 wp_lam.
       wp_bind (index _ _).
@@ -1193,12 +1004,12 @@ Qed.
       wp_load.
       do 2 wp_proj.
       wp_load.
-      assert (Hash K k' `mod` length data < length data) as HLen.
+      assert (Hash k' `mod` length data < length data) as HLen.
       { apply Nat.mod_upper_bound. unfold gt in *. Nat.order. }
-      assert (exists l, data !! (Hash K k' `mod` length data) = Some l) as HSome.
+      assert (exists l, data !! (Hash k' `mod` length data) = Some l) as HSome.
       by apply lookup_lt_is_Some_2.
       destruct HSome as [l HSome].
-      pose proof (list_lookup_fmap bucket data (Hash K k' `mod` length data)) as HBucket.
+      pose proof (list_lookup_fmap bucket data (Hash k' `mod` length data)) as HBucket.
       rewrite HSome in HBucket.
       simpl in HBucket.
       rewrite fmap_length.
@@ -1221,7 +1032,7 @@ Qed.
       intro.
       wp_if.
       wp_apply (resize_spec (#lArr, #lSize, #lCap) with "[-HΦ]").
-      iExists ({[k']} ∪ D ). iExists lArr,  (insertData data k' (k, x)).
+      iExists ({[k']} ∪ D ),  (insert_data data k' (k, x)).
       iSplit. iPureIntro.
       by rewrite insert_length.
       iSplit. iPureIntro.
@@ -1231,11 +1042,11 @@ Qed.
       iSplit. iPureIntro.
       apply have_keys_insert ; [assumption|assumption].
       iSplit. iPureIntro. by apply is_domain_insert.
-      iExists lSize, lCap, arr. 
+      iExists lArr, lSize, lCap, arr. 
       iSplit ; [done|].
       iSplitL "Harr".
-      unfold insertData.
-      unfold lookupData.
+      unfold insert_data.
+      unfold lookup_data.
       rewrite list_fmap_insert.
       rewrite HSome.
       simpl.
@@ -1245,14 +1056,14 @@ Qed.
       rewrite population_insert ; [|assumption].
       rewrite (_:((1 + Z.of_nat(population D M))%Z = (Z.of_nat (S (population D M))))) ; [|lia].
       iFrame.
-      unfold insertData.
+      unfold insert_data.
       rewrite insert_length.
       iFrame.
       iApply "HΦ".
       intro.
       wp_if.
       iApply "HΦ".
-      iExists ({[k']} ∪ D ). iExists lArr,  (insertData data k' (k, x)). 
+      iExists ({[k']} ∪ D ),  (insert_data data k' (k, x)). 
       iSplit. iPureIntro.
       by rewrite insert_length.
       iSplit. iPureIntro.
@@ -1262,11 +1073,11 @@ Qed.
       iSplit. iPureIntro.
       apply have_keys_insert ; [assumption|assumption].
       iSplit. iPureIntro. by apply is_domain_insert.
-      iExists lSize, lCap, arr. 
+      iExists lArr, lSize, lCap, arr. 
       iSplit ; [done|].
       iSplitL "Harr".
-      unfold insertData.
-      unfold lookupData.
+      unfold insert_data.
+      unfold lookup_data.
       rewrite list_fmap_insert.
       rewrite HSome.
       simpl.
@@ -1276,38 +1087,38 @@ Qed.
       rewrite population_insert ; [|assumption].
       rewrite (_:((1 + Z.of_nat(population D M))%Z = (Z.of_nat (S (population D M))))) ; [|lia].
       iFrame.
-      unfold insertData.
+      unfold insert_data.
       rewrite insert_length.
       iFrame.
     Qed.
 
-    Lemma lookup_impl_spec M D lArr data t k k' :
-      as_key K k = Some k' ->
-      {{{TableInState M D lArr data t}}}
+    Lemma lookup_impl_spec M D data t k k' :
+      as_key k = Some k' ->
+      {{{TableInState M D data t}}}
         lookup_impl t k
-        {{{ RET match head (M k') with Some v => SOMEV v | None => NONEV end ; TableInState M D lArr data t }}}.
+        {{{ RET match head (M k') with Some v => SOMEV v | None => NONEV end ; TableInState M D data t }}}.
     Proof.
       intro HKey.
       iIntros (Φ) "[% [% [% [% [% HTable]]]]] HΦ".
       assert (content M data) as HContent. assumption.
       assert (have_keys data) as HKeys. assumption.
-      iDestruct "HTable" as (lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
+      iDestruct "HTable" as (lArr lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
       iSimplifyEq.
       do 2 wp_lam.
       wp_apply (index_spec _ _ _ _ _ (bucket <$> data) HKey with "[HlCap]"). by rewrite fmap_length.
       rewrite fmap_length.
       iIntros "HlCap".
       do 2 wp_lam. do 2 wp_proj. wp_load.
-      assert (exists b, data !! (Hash K k' `mod` length data) = Some b) as [b Hb].
+      assert (exists b, data !! (Hash k' `mod` length data) = Some b) as [b Hb].
       { apply lookup_lt_is_Some_2. apply mod_bound_pos. lia. assumption. }
-      assert ((bucket <$> data) !! (Hash K k' `mod` length data) = Some (bucket b)) as HBucket.
+      assert ((bucket <$> data) !! (Hash k' `mod` length data) = Some (bucket b)) as HBucket.
       { by rewrite list_lookup_fmap Hb. }
       Check (array_load_spec _ _ _ _ HBucket).
       wp_apply (array_load_spec _ _ _ _ HBucket with "Harr").
       iIntros "Harr".
       Print have_keys.
       assert (forall b, M k' = snd <$> (bucket_filter k' b) ->
-                        Forall (λ '(k, _), is_Some (as_key K k)) b ->
+                        Forall (λ '(k, _), is_Some (@as_key K k)) b ->
                         WP (rec: "lookup_buck" "b" :=
                               match: "b" with
                                 NONE => NONE
@@ -1315,7 +1126,7 @@ Qed.
                                 => let: "k'" := Fst (Fst "a") in
                                    let: "x" := Snd (Fst "a") in
                                    let: "b'" := Snd "a" in
-                                   if: (equal K) k "k'" then
+                                   if: equal  k "k'" then
                                      SOME "x"
                                    else
                                      "lookup_buck" "b'"
@@ -1328,9 +1139,9 @@ Qed.
         - apply Forall_cons in HKeysb. destruct HKeysb as [[k''' HKey'] Hkeysb].
 
           wp_rec. wp_match. do 2 wp_proj. wp_lam. do 2 wp_proj. wp_lam. wp_proj. wp_lam.
-          wp_bind (equal _ _ _ ).
+          wp_bind (equal _ _ ).
           iApply wp_wand.
-          iApply (equal_spec _ _ _ _ _ HKey HKey').
+          iApply (equal_spec _ _ _ _ HKey HKey').
           iIntros (v) "?".
           iSimplifyEq.
           case_bool_decide.
@@ -1339,11 +1150,11 @@ Qed.
           + wp_if. apply IH. rewrite HM. unfold bucket_filter, filter. simpl.
             rewrite decide_False. done. rewrite HKey'. by injection. assumption.
       }
-      iApply wp_wand. iApply loop_spec. rewrite HContent. unfold lookupData. by rewrite Hb.
+      iApply wp_wand. iApply loop_spec. rewrite HContent. unfold lookup_data. by rewrite Hb.
       apply (Forall_lookup_1 _ _ _ _ HKeys Hb).
       iIntros (v) "%". simplify_eq. iApply "HΦ".
       do 5 (iSplit ; [done|]).
-      iExists lSize, lCap, arr.
+      iExists lArr, lSize, lCap, arr.
       iSplit. done. iFrame.
     Qed.
       
@@ -1442,8 +1253,8 @@ Qed.
     Proof.
       intros [HContent [HNG [HKeys [Hrem [HContent' [HNG' [HKeys' [Hlen [Hlookup_lt [Hlookup_eq Hlookup_gt]]]]]]]]]] Hlookup.
       pose proof (Forall_cons_1 _ _ _ (Forall_lookup_1 _ _ _ _ HKeys' Hlookup)) as [[k' Hk'] _] .
-      assert (i = Hash K k' `mod` length data').
-      { destruct (decide (i = Hash K k' `mod` length data')) as [|Hne]. assumption.
+      assert (i = Hash k' `mod` length data').
+      { destruct (decide (i = Hash k' `mod` length data')) as [|Hne]. assumption.
         specialize (HNG' i k' (lookup_lt_Some _ _ _ Hlookup) Hne).
         rewrite Hlookup /bucket_filter /filter in HNG'. simpl in HNG'. rewrite decide_True in HNG'.
         contradict HNG'. done. assumption.
@@ -1454,14 +1265,14 @@ Qed.
         pose proof (lookup_lt_Some _ _ _ Hlookup).
         assert (forall (m n : nat), m < n -> 0 < n) as about_lt.
         { intros. lia. }
-        apply (about_lt (Hash K k' `mod` length data')). by simplify_eq.
+        apply (about_lt (Hash k' `mod` length data')). by simplify_eq.
       }
       
       exists (<[i := b]> data'), (removeM k' M').
       do 3 (split ; [assumption|]).
       split. rewrite app_assoc. apply (removal_app_1 _ _ M'). assumption.
       constructor 2 with k' (removeM k' M'). assumption.
-      rewrite HContent'. unfold lookupData. simplify_eq.
+      rewrite HContent'. unfold lookup_data. simplify_eq.
       rewrite Hlookup. unfold bucket_filter, filter. simpl. rewrite decide_True. reflexivity.
       assumption.
       done. constructor. done.
@@ -1469,8 +1280,8 @@ Qed.
       rewrite {1 2 3 4}(_:b = bucket_remove k' ((k, x) :: b)) ;
         [| simpl ;by rewrite decide_True ].
 
-      rewrite {1 2 3 4}(_:(((k, x) :: b) = lookupData data' k')) ;
-        [| unfold lookupData; simplify_eq; by rewrite Hlookup].
+      rewrite {1 2 3 4}(_:(((k, x) :: b) = lookup_data data' k')) ;
+        [| unfold lookup_data; simplify_eq; by rewrite Hlookup].
 
       simplify_eq. split.
       by apply content_remove.
@@ -1553,21 +1364,21 @@ Qed.
 
         
       
-      Lemma fold_loop_spec M M' seq I (f a t : val) D (lArr : loc) data data' i :
+      Lemma fold_loop_spec M M' seq I (f a t : val) D data data' i :
         (forall k x seq a',
             permitted M (seq ++ [(k,x)]) ->
             {{I seq a'}} f k x {{v, I (seq ++ [(k,x)]) v }}%I) ->
         fold_loop_inv data M seq [] data' M' i  ->
-        {{{TableInState M D lArr data t ∗ I seq a}}}
+        {{{TableInState M D data t ∗ I seq a}}}
           fold_loop #i f t a
           {{{seq' data'' M'' v , RET v; ⌜fold_loop_inv data M seq' [] data'' M'' (length data)⌝ ∗
-                                         TableInState M D lArr data t ∗ I seq' v}}}.
+                                         TableInState M D data t ∗ I seq' v}}}.
       Proof.
         intros Hf HInv.
         iIntros (Φ).
         iLöb as "IH" forall (a data' M' seq i HInv).
         iIntros "[[% [% [% [% [% HTable]]]]] Hseq] HΦ".
-        iDestruct "HTable" as (lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
+        iDestruct "HTable" as (lArr lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
         iSimplifyEq.
         pose proof HInv as HInv_copy.
         destruct HInv_copy as [_ [_ [_ [HRem [_ [_ [_ [Hlen [Hlookup_lt [Hlookup_eq _]]]]]]]]]].
@@ -1610,7 +1421,7 @@ Qed.
           wp_apply ("IH" with "[%] [-HΦ]"). done.
           iSplitR "HI".
           do 5 (iSplit ; [done|]).
-          iExists lSize, lCap, arr.
+          iExists lArr, lSize, lCap, arr.
           iSplit. done.
           iFrame. iFrame.
           iFrame.
@@ -1618,7 +1429,7 @@ Qed.
           destruct (decide (i = length data)) as [->|Hne].
           + iSplit. done. iFrame.
             do 5 (iSplit ; [done|]).
-            iExists lSize, lCap, arr.
+            iExists lArr, lSize, lCap, arr.
             iSplit. done. iFrame.
           + assert (length data' < i) as Hlt. lia.
             specialize (Hlookup_lt _ Hlt).
@@ -1635,17 +1446,17 @@ Qed.
       Proof.
         intros Hf.
         iIntros (Φ) "[HTable HI] HΦ".
-        iDestruct "HTable" as (D lArr data) "[% [% [% [% [% HTable]]]]]".
-        iDestruct "HTable" as (lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
+        iDestruct "HTable" as (D data) "[% [% [% [% [% HTable]]]]]".
+        iDestruct "HTable" as (lArr lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
         iSimplifyEq.
         do 3 wp_lam.
         assert (fold_loop_inv data M [] [] data M 0) as HInv.
         { by apply fold_loop_inv_init. }
         rewrite (_:(0%Z = O%Z)) ; [|done].
-        wp_apply (fold_loop_spec _ _ _ I _ _ (#lArr, #lSize, #lCap)%V D lArr _ _ _  Hf HInv with "[-HΦ]").
+        wp_apply (fold_loop_spec _ _ _ I _ _ (#lArr, #lSize, #lCap)%V D _ _ _  Hf HInv with "[-HΦ]").
         iSplitR "HI".
         do 5 (iSplit ; [done|]).
-        iExists lSize, lCap, arr.
+        iExists lArr, lSize, lCap, arr.
         iSplit. done. iFrame.
         iFrame.
         iIntros (seq' data' M' v) "[% [HTable HI]]".
@@ -1654,12 +1465,144 @@ Qed.
         { assumption. }
         iApply "HΦ". iSplit. iPureIntro.
         apply (removal_equiv_2 _ M') ; [|done].
-        intro k. rewrite HContent'. unfold lookupData. rewrite Hlookup_lt. reflexivity.
+        intro k. rewrite HContent'. unfold lookup_data. rewrite Hlookup_lt. reflexivity.
         rewrite Hlen. apply mod_bound_pos. lia. by rewrite -Hlen.
         by rewrite app_nil_r.
       Qed.
+
+      Definition cascade_inv seq M data b i :=
+        exists seq' bPref data' M',
+          data' !! i = Some b /\
+          seq = seq' ++ bPref /\
+          fold_loop_inv data M seq' bPref data' M' i.
+                        
+      Definition is_cascade f seq M data (t : val) :=
+        exists b i,
+          cascade_inv seq M data b i /\
+          forall P Q, {{P}} cascade_next (bucket b) t #i {{Q}} -> {{P}} f #() {{Q}}.
+
+      Lemma cascade_next_spec seq M D data b i t:
+        cascade_inv seq M data b i ->
+        {{{ TableInState M D data t }}}
+          cascade_next (bucket b) t #i
+          {{{v k x f' , RET v; TableInState M D data t ∗
+                               ((⌜v = NONEV⌝ ∗ ⌜complete M seq⌝) ∨
+                                (⌜v = SOMEV ((k, x), f')⌝ ∗
+                                 ⌜is_cascade f' (seq ++ [(k, x)]) M data t⌝)) }}}.
+      Proof.
+        intro HCas.
+        iIntros (Φ) "[% [% [% [% [% HTable]]]]] HΦ".
+        iLöb as "IH" forall (i b HCas).
+        destruct HCas as [seq' [bPref [data' [M' [Hlookup [Hseq HInv]]]]]].
+        pose proof HInv as [_ [_ [_ [HRem [HContent' [? [? [HLen [Hlookup_lt [Hlookup_eq Hlookup_gt]]]]]]]]]].
+        iDestruct "HTable" as (lArr lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
+        iSimplifyEq. wp_rec. do 2 wp_lam.
+        destruct b as [|[k x] b].
+        - wp_match. wp_op. wp_lam. wp_proj. wp_load. wp_op.
+          + intro Hi. wp_if. do 2 wp_proj. wp_load.
+            assert (exists b',  data !! (S i) = Some b') as [b' HSome].
+            { apply lookup_lt_is_Some. lia. }
+            assert ((bucket <$>  data) !! (S i) = Some (bucket b')) as HBucket.
+            { rewrite list_lookup_fmap fmap_Some. by exists b'. }
+            assert (HZ2Nat:(i + 1)%Z = (S i)%nat%Z) ; first lia.
+            rewrite {1}HZ2Nat.
+            wp_apply (array_load_spec _ _ _ _ HBucket with "Harr").
+            iIntros "Harr". rewrite HZ2Nat.
+            iApply ("IH" with "[%] [-HΦ]").
+            * 
+              pose proof (fold_loop_inv_next_iteration data M (seq' ++ bPref) data' M' i b') as asd.
+              exists (seq' ++ bPref), [], data', M'.
+              split.
+              rewrite Hlookup_gt ; [assumption| lia].
+
+              split. symmetry ; apply app_nil_r.
+
+              unfold fold_loop_inv. rewrite app_nil_r.
+              do 8 (split ; first assumption).
+              split. intros j Hj.
+              destruct (decide (j < i)). by apply Hlookup_lt. rewrite (_:j=i) ; [done|lia].
+
+              split ; intros ; rewrite -Hlookup_gt ; solve [done|lia].
+              
+            * iExists lArr, lSize, lCap, arr. iSplit ; first done. iFrame.
+            * iFrame.
+          + intro Hi. wp_if. iApply "HΦ". iSplit.
+            do 5 (iSplit ; first done).
+            iExists lArr, lSize, lCap, arr. iSplit ; [done|iFrame].
+            iLeft. iSplit ; first done.
+            iPureIntro. apply (removal_equiv_2 _ M') ; last assumption.
+            intro k. rewrite HContent' /lookup_data.
+            destruct (decide (Hash k `mod` length data = i)) as [<-|].
+            * by rewrite -HLen Hlookup.
+            * rewrite Hlookup_lt ; first reflexivity. rewrite -HLen.
+              assert (Hash k `mod` length data < S i) ; last lia.
+              assert (Hash k `mod` length data < length data) ; first apply mod_bound_pos ; lia.
+        - simpl. wp_match. do 4 wp_proj. iApply "HΦ". iSplit.
+          do 5 (iSplit ; first done).
+          iExists lArr, lSize, lCap, arr. iSplit ; [done|iFrame].
+          iRight. iSplit ; first done.
+          iPureIntro. exists b, i. split.
+          + pose proof (fold_loop_inv_next_elem _ _ _ _ _ _ _ _ _ _ HInv Hlookup) as [data'' [M'' HInv']].
+            pose proof HInv' as [_ [_ [_ [HRem' [HContent'' [? [? [HLen' [Hlookup_lt' [Hlookup_eq' Hlookup_gt']]]]]]]]]].
+            exists seq', (bPref ++ [(k, x)]), data'', M''.
+
+            split.
+            specialize (Hlookup_eq _ Hlookup).
+            assert (exists b', data'' !! i = Some b') as [b' Hb'].
+            { apply lookup_lt_is_Some_2. rewrite -HLen' HLen. apply (lookup_lt_Some _ _ _ Hlookup). }
+            specialize (Hlookup_eq' _ Hb'). rewrite Hlookup_eq -app_assoc in Hlookup_eq'.
+            injection Hlookup_eq' as Heq.  apply app_inv_head in Heq. injection Heq as Heq. by rewrite Heq.
+
+            split. symmetry ;apply app_assoc.
+            assumption.
+          + intros ?? Hnext. iIntros "!# ?". wp_lam. wp_proj. by iApply Hnext.
+        Unshelve. all : exact #().
+      Qed.
       
-      
+      Lemma is_cascade_spec f seq M D data t:
+        is_cascade f seq M data t ->
+        {{{ TableInState M D data t }}}
+          f #()
+          {{{v k x f' , RET v; TableInState M D data t ∗
+                               ((⌜v = NONEV⌝ ∗ ⌜complete M seq⌝) ∨
+                                (⌜v = SOMEV ((k, x), f')⌝ ∗
+                                 ⌜permitted M (seq ++ [(k, x)])⌝ ∗           
+                                 ⌜is_cascade f' (seq ++ [(k, x)]) M data t⌝)) }}}.
+      Proof.
+        intros [b [i [HCas Hf]]].
+        iIntros (Φ) "HTable HΦ".
+        iCombine "HTable" "HΦ" as "H".
+        iApply (Hf with "H").
+        iIntros "!# [HTable HΦ]".
+        wp_apply (cascade_next_spec _ _ _ _ _ _ _ HCas with "HTable").
+        iIntros (v k x f') "[HTable [[% %]|[% %]]]" ; iApply "HΦ". eauto.
+        assert (HCas' : is_cascade f' (seq ++ [(k, x)]) M data t) ; first assumption.
+        iSplit ; first iFrame. iRight. iSplit ; first done. iSplit.
+        destruct HCas' as [_ [_ [[? [? [_ [M' [_ [-> [_ [_ [_ [? _]]]]]]]]]] _]]].
+        iPureIntro. by exists M'.
+        done. Unshelve. all : exact #().
+      Qed.        
+            
+          
+      Lemma cascade_impl_spec M D data t:
+        {{{TableInState M D data t}}} cascade_impl t {{{f, RET f; ⌜is_cascade f [] M data t⌝ ∗ TableInState M D data t }}}.
+      Proof.
+        iIntros (Φ) " HTable HΦ".        
+        iDestruct "HTable" as "[% [% [% [% [% HTable]]]]]".
+        iDestruct "HTable" as (lArr lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
+        iSimplifyEq. wp_lam. do 2 wp_proj. wp_load.
+        assert (exists b,  data !! 0 = Some b) as [b HSome].
+        { apply lookup_lt_is_Some. lia. }
+        assert ((bucket <$>  data) !! 0 = Some (bucket b)) as HBucket.
+        { rewrite list_lookup_fmap fmap_Some. by exists b. }
+        wp_apply (array_load_spec _ _ _ _ HBucket with "Harr").
+        iIntros "Harr". wp_lam. iApply "HΦ". iSplit. iPureIntro.
+        exists b, 0. split. exists [], [], data, M. auto using fold_loop_inv_init.
+        intros ?? HCas. iIntros "!# ?". wp_lam. by iApply HCas.
+        do 5 (iSplit ; first done).
+        iExists lArr, lSize, lCap, arr. iSplit ; [done|iFrame].
+      Qed.
+        
   End Implementation.
   
 End HashTable.
