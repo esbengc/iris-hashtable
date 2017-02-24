@@ -568,7 +568,7 @@ Qed.
     Definition is_domain (D :listset_nodup (Key K)) M :=
       forall k, k ∉ D -> M k = [].
   
-    Instance is_domain_proper : Proper ((≡) ==> (=) ==> (iff)) is_domain.
+    Global Instance is_domain_proper : Proper ((≡) ==> (=) ==> (iff)) is_domain.
     Proof.
       intros ? ? Hequiv ? ? <-.
       split.  intros HDom k. rewrite -elem_of_proper. apply HDom. done. done.
