@@ -2,7 +2,7 @@ From iris.base_logic Require Import base_logic.
 From iris.program_logic Require Import hoare.
 From iris.heap_lang Require Import proofmode notation.
 From iris.proofmode Require Import tactics.
-Require Import forloop.
+From iris_programs Require Import forloop.
 
 Lemma wp_for `{heapG Σ} P E m n e j `{Closed [j] e}:
   (m ≤ n)%Z ->
@@ -21,9 +21,10 @@ Tactic Notation "wp_for" constr(P) "with" constr(Hs) :=
   wp_apply (wp_for P with Hs ++ " [] [-]" ) ;
   [try solve [done | lia | eauto] | ..
    |let i := fresh in
+    let v := fresh in
     let Hi := iFresh' "Hi" in
     let HP := iFresh' "HP" in
-    iIntros "!#" ; iIntros (i) [Hi ; HP] ; iNext ; simpl_subst ; iRevert (i) [Hi; HP] |iIntros].
+    iIntros "!#" ; iIntros (i) [Hi ; HP] ; iNext ; simpl_subst ; iRevert (i) [Hi; HP] |iIntros (v)].
 
 Tactic Notation "wp_for" constr(P):= wp_for P with "[]".
 
@@ -32,5 +33,5 @@ Proof.
   iIntros "!# [Hl1 Hl2]".
   wp_op.
   wp_for (fun i' => l1 ↦ #i')%I with "[Hl1]" ; first done.
-  iIntros. wp_load. wp_op. wp_store. by rewrite Z.add_comm. iFrame.
+  iIntros. wp_load. wp_op. wp_store. by rewrite Z.add_comm. iIntros. iFrame.
 Qed.
