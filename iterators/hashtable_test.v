@@ -1,4 +1,4 @@
-From iris.prelude Require Import listset_nodup.
+From stdpp Require Import listset_nodup.
 From iris.proofmode Require Import tactics.
 From iris.heap_lang Require Import lang notation proofmode.
 From iris.program_logic Require Import hoare.

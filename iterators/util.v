@@ -1,5 +1,12 @@
 From mathcomp Require Import ssreflect.
-From iris.prelude Require Import fin_collections listset_nodup.
+From stdpp Require Import fin_collections listset_nodup.
+
+Lemma from_option_inv_ne {A B : Type} (f : A -> B) b a opt :
+  from_option f b opt = a -> a ≠ b -> is_Some opt.
+Proof.
+  case opt.
+  eauto. intros <-. contradiction.
+Qed.    
 
 Lemma collection_fold_union_singleton `{FinCollection A C} {B} f (b : B) (x : A) (X : C)
       `{!Equivalence R} `{!Proper ((=) ==> R ==> R) f} :
@@ -89,6 +96,7 @@ Proof.
     specialize (IH (D2 ∖ {[x]}) Hsubset').
     lia. set_solver. assumption.
 Qed.
+
 Lemma collection_sum_with_union `{FinCollection A C} `{forall x D, Decision (x ∈ D)} D1 D2 f :
   collection_sum_with f (D1 ∪ D2) =
   (collection_sum_with f D1 + collection_sum_with f D2) - collection_sum_with f (D1 ∩ D2).

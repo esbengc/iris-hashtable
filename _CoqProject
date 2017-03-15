@@ -2,8 +2,11 @@
 ./subject-observer/subject-observer.v
 ./forloop.v
 ./iterators/util.v
+./iterators/hashtable_invariants.v
+./iterators/hashtable_model.v
+./iterators/hashtable_model_test.v
 ./iterators/hashtable_test.v
 ./iterators/hashtable.v
 ./iterators/array.v
-./iterators/.#hashtable.v
 ./for_test.v
+
