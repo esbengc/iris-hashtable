@@ -10,7 +10,7 @@
 
 \usepackage{amsmath}
 %\usepackage{amsfonts}
-%\usepackage{amssymb}
+\usepackage{amssymb}
 \usepackage{graphicx}
 \usepackage{geometry}
 \usepackage{minted}
@@ -37,7 +37,87 @@
 \section{Hash tables}
 A dictionary is a finite mapping from keys to values. Hash tables are an implementation of dictionaries, where the keys are equipped with a hash function, i.e. a function from keys to integers. For the implementation used here, we adopt the convention that multiple values can be stored under a single key. Performing a lookup operation on a key with multiple associated values will return the value inserted last under said key.
 
-In the implementation, it is assumed that, in addition to the primitive operations of $F_{\mathrm{\mu, ref, conc}}$, operations for creating, reading from, and writing to arrays are available (see Figure~\ref{fig:arr_spec}). A hash table is represented as a triple of references $(l_a, l_s, l_c)$, where $l_a$ points to an array of buckets, and $l_s$ and $l_c$ points to integers containing the number of stored elements and the length of the array respectively. Each bucket is a linked list of key-value pairs (i.e. a bucket is either \texttt{NONE} or \texttt{SOME ($k$, $x$, $b$)} for a key $k$, a value $x$, and a bucket $b$). The following operations are available: \texttt{create}, \texttt{insert}, \texttt{lookup}, \texttt{fold}, and \texttt{cascade}. The last two, \texttt{fold} and \texttt{cascade}, provide different means for iteration through the entries in the table. The \texttt{fold} function is a variant of the functions over lists known from functional programming. It takes a function $f$ and a value $a$ as arguments, and returns $f \ k_n \ x_n (f \ k_{n-1} \ x_{n-1} (\ldots (f \ k_1 \ x_1 \ a)))$, where the $(k_i, x_i)$'s are the key-value pairs stored in the table. The \texttt{cascade} function returns a \emph{cascade} \cite{pottier-cpp-17}, which is a stateless variant of \emph{iterators} \cite{Gamma:1995:DPE:186897} as known from many programming languages, including Java. A cascade is a nullary function (i. e. a function taking the unit value \texttt{()} as argument) which either returns \texttt{SOME($k,x,c$)}, where $(k,x)$ is a key-value pair in the table and $c$ is a cascade for the remaining entries in the table, or it returns \texttt{NONE} if there are no more entries to return. For a reader familiar with iterators in Java, a cascade can be seen as the \texttt{next} method of an iterator. However, rather than advancing by updating some internal state of the iterator object, the updated "state" is returned as a new function.
+Presented here is a hash table module fully specified in Iris. The following operations are available in the module: \texttt{create}, \texttt{insert}, \texttt{lookup}, \texttt{fold}, and \texttt{cascade}. The last two, \texttt{fold} and \texttt{cascade}, provide different means for iteration through the entries in the table. The \texttt{fold} function is a variant of the functions over lists known from functional programming. It takes a function $f$ and a value $a$ as arguments, and returns $f \ k_n \ x_n (f \ k_{n-1} \ x_{n-1} (\ldots (f \ k_1 \ x_1 \ a)))$, where the $(k_i, x_i)$'s are the key-value pairs stored in the table. The \texttt{cascade} function returns a \emph{cascade} \cite{pottier-cpp-17}, which is a stateless variant of \emph{iterators} \cite{Gamma:1995:DPE:186897} as known from many programming languages, including Java. A cascade is a nullary function (i. e. a function taking the unit value \texttt{()} as argument) which either returns \texttt{SOME($k,x,c$)}, where $(k,x)$ is a key-value pair in the table and $c$ is a cascade for the remaining entries in the table, or it returns \texttt{NONE} if there are no more entries to return. For a reader familiar with iterators in Java, a cascade can be seen as the \texttt{next} method of an iterator. However, rather than advancing by updating some internal state of the iterator object, the updated "state" is returned as a new function.
+
+The specification presented here is based on the specification for hash tables in CFML by Pottier \cite{pottier-cpp-17}. It uses the same ideas behind the model and the function specifications and adapts the solution for Iris. The main differences between the two stems from the fact that CFML uses typed values, while Iris uses untyped values.
+
+\thoughts{Slightly inaccurate phrasing. Iris is not tied to a specific language and AFAIK there is nothing preventing someone from building a type system on top of an untyped language or even defining a typed language directly. The only language that has actually been implemented just happens to be untyped.}
+
+\subsection{Model and interface}
+Since hash tables rely on hash functions that can be applied to keys, both the implementation and specification of the hash tables are parameterized with a Coq type \texttt{Key} and a function \texttt{Hash} that implements the type class \texttt{Hashable} shown in Figure~\ref{fig:hashable}. The type \texttt{Key} should be a set of logical keys reflecting the set of program values that are valid keys. Similarly, the function \texttt{Hash} must be a hash function on the \texttt{Key} type. The co-domain of the hash function is the set of natural numbers. This avoid potential ambiguities that could arise due to how the modulo operator in programming languages often have semantics different from the mathematical modulo function when applied to negative numbers. The class \texttt{Hashable} contains fields relating \texttt{Key} objects to program values and defining the hash function as a program function. In particular, it defines two program functions \texttt{equalf} and \texttt{hashf}, which decide equality on keys and compute the hash function respectively. This is formally specified by the fields \texttt{equal\_spec} and \texttt{hash\_spec}. It also contains a field \texttt{as\_key}, which is a partial function from program values to objects of type \texttt{Key}. The set of valid keys is defined as the values $v$ for which $\mathtt{as\_key} \ v = \mathtt{Some} \ k$.  Note that \texttt{as\_key} is not required to be injective for the set of valid keys. Thus multiple distinct program values may map to the same logical key. If this is the case, then an equivalence relation is induced on the set of valid keys in the language, such that each logical key defines an equivalence class. The idea of a separate type of logical keys is different from the approach used in the CFML specification \cite{pottier-cpp-17}. Since program values in CFML are typed, it is not necessary to introduce a separate logical key type, as the set of valid keys is already defined by the key type in the program language. The approach used here, however, allows the valid keys to be any set expressible in Coq, rather than being restricted to the types of programming languages such as OCaml. It would be possible to avoid introducing the logical \texttt{Key} type if we instead required a predicate directly stating whether a value is a valid key. For the user, reasoning about a logical key type might be just as convenient, however. In any case, if the user wishes to use a predicate defining valid keys, they can usually still do so in this model, for example by defining the type \texttt{Key} as a dependent pair \texttt{\{ k: val | is\_key k \}} if \texttt{is\_key} is the name of the predicate.
+
+\thoughts{While I did not think of it at the time, an alternative to introducing a Key type would be to simply introduce an \texttt{is\_key : val -> Prop} predicate. The logical Hash function would then have type \texttt{(k : val) -> is\_key k -> nat} and the model would have type \texttt{forall k, is\_key k -> list val}. I do not know if this approach is any better or worse. My guess is that it would not make much difference as it is easy to convert between the two representations (\texttt{is\_key k := is\_Some (as\_key k)} or \texttt{Key := \{k | is\_key k\}}). The only real difference is that the approach with logical keys requires that the function \texttt{as\_key} can decide if a key is valid, while the other approach does not need this property to be decidable in general (though the client will still need to prove that all inserted keys are valid when using the table). \textbf{Edit:} I added a few words about this in the above paragraph.}
+
+\begin{figure}
+\begin{minted}{coq}
+Class Hashable Σ `{heapG Σ} (Key : Type)
+               `{EqDecision Key} (Hash : Key -> nat) :=
+  { 
+    equalf : val;
+    hashf : val;
+    as_key : val -> option Key;
+    
+    equal_spec (k1 k2: Key) (v1 v2: val) :
+      as_key v1 = Some k1 ->
+      as_key v2 = Some k2 ->
+      WP equalf v1 v2 {{u, ⌜u = #(bool_decide (k1 = k2))⌝}};
+      
+    hash_spec k v : as_key v = Some k -> WP hashf v {{u, ⌜u = #(Hash k)⌝}} 
+  }.
+
+\end{minted}
+\caption{Definition of the class \texttt{Hashable}}
+\label{fig:hashable}
+\end{figure}
+
+Since a hash table represents of a dictionary, our specification will rely on a predicate relating a table to an abstract model of a dictionary. For this model, we will use the finite map types from the std++ library. The model type is this \texttt{Map (list val)}, where \texttt{Map} can be any type for which an instance of the type class \texttt{FinMap Key Map} exists, i. e. \texttt{Map} must be a type of finite maps with \texttt{Key} as the type of keys. Since we allow multiple values to be stored under each key, we use \texttt{list val} as the co-domain for the maps. We use the convention that each inserted element will be stored at the head of the list associated with the given key. To support this, we define the following operations on the model:
+\begin{itemize}
+\item \texttt{lookup\_all M k} returns the list of values stored in \texttt{M} under key \texttt{k}. It differs from the primitive lookup function in that it returns the empty list if \texttt{k} is not in the domain of \texttt{M}.
+\item \texttt{insert\_val M k x} returns \texttt{M} with the value $x$ inserted at the head of the list stored at \texttt{k}.
+\item \texttt{remove\_val M k} returns \texttt{M} with the head of the list stored under key \texttt{k} removed. If no values are stored in \texttt{M} under \texttt{k}, it returns \texttt{M} unchanged.
+\end{itemize}
+Additionally, we define an equivalence relation \texttt{MEquiv}. Two maps are considered equivalent under this relation if they cannot be distinguished by \texttt{lookup\_val}. In particular, this means that two maps $M_1$ and $M_2$ may be considered equivalent even if a key $k$ is not in the domain of $M_1$ while $M_2$ maps it to the empty list.
+
+\begin{figure}
+\begin{minted}{coq}
+Structure Table Σ Key Hash `{Hashable Σ Key Hash}
+                Map `{FinMap Key Map} : Type :=
+  { 
+    table_create : val ;
+    table_insert : val ;
+    table_lookup : val ;
+    table_fold : val ;
+    table_cascade : val ;
+
+    table_state : Type ;
+    table_in_state : Map (list val) -> table_state -> val -> iProp Σ ;
+    is_cascade : Map (list val) -> val -> list (val * val) ->
+                 table_state -> val -> Prop ;
+	
+    table_in_state_proper: 
+      Proper (MEquiv ==> (=) ==> (=) ==> (⊣⊢)) table_in_state ;
+    is_cascade_proper : 
+      Proper (MEquiv ==> (=) ==> (=) ==> (=) ==> (=) ==> (↔)) is_cascade ;
+    
+    table_create_spec (n : nat) : (* ... *) ;
+    table_insert_spec t k x M state k' : (* ... *) ;
+    table_lookup_spec M state t k k' : (* ... *) ;
+    table_fold_spec M state I f t a : (* ... *) ;
+    is_cascade_spec M f seq state t: (* ... *) ;
+    table_cascade_spec M state t: (* ... *)
+  }.
+\end{minted}
+\caption{The \texttt{Table} type defines the interface of the hash table module}
+\label{fig:interface}
+\end{figure}
+The interface for the hash table module is is defined as a record type \texttt{Table}, whose definition is shown in Figure~\ref{fig:interface}. It contains the five available operations as program values along with their specifications (the body of the specifications have been omitted here for brevity). It also contains an abstract type \texttt{table\_state} which describes the internal of the table and two predicates \texttt{table\_in\_state} and \texttt{is\_cascade}. The former states that a value represents a table. The latter is used in the specification for cascades. Both predicates are compatible with the \texttt{MEquiv} relation (expressed by the two \texttt{Proper} proofs).
+
+One should note that the model does not mention the program values acting as keys directly. Only the logical keys of type \texttt{Key} are mentioned. This means that if a value is inserted into a table under a key, and if multiple values represents the same logical key, then the information about which key was used during the insert operation will be lost. Implementations are thus allowed to forget this information as well. For instance, an implementation could choose to store only the first key being inserted from each equivalence class and reuse that key whenever subsequent insertions are done using equivalent keys. This could be a potential optimization as it could reduce the memory used by the data structure if the keys are large in size.
+
+
+
+\subsection{Implementation and table predicate}
+In the implementation, it is assumed that, in addition to the primitive operations of $F_{\mathrm{\mu, ref, conc}}$, operations for creating, reading from, and writing to arrays are available (see Figure~\ref{fig:arr_spec}). A hash table is represented as a triple of references $(l_a, l_s, l_c)$, where $l_a$ points to an array of buckets, and $l_s$ and $l_c$ points to integers containing the number of stored elements and the length of the array respectively. Each bucket is a linked list of key-value pairs (i.e. a bucket is either \texttt{NONE} or \texttt{SOME ($k$, $x$, $b$)} for a key $k$, a value $x$, and a bucket $b$).
 
 \begin{figure}
 \begin{minted}{coq}
@@ -66,77 +146,36 @@ array_store_spec:
 \label{fig:arr_spec}
 \end{figure}
 
-The specification presented here is %
-%heavily inspired by the specification for hash tables in CFML by Pottier \cite{pottier-cpp-17}.
-based on the specification for hash tables in CFML by Pottier \cite{pottier-cpp-17}. It uses the same ideas behind the model and the function specifications and adapts the solution for Iris. The main differences between the two stems from the fact that CFML uses typed values, while Iris uses untyped values.
-
-\thoughts{Slightly inaccurate phrasing. Iris is not tied to a specific language and AFAIK there is nothing preventing someone from building a type system on top of an untyped language or even defining a typed language directly. The only language that has actually been implemented just happens to be untyped.}
-
-\subsection{Model}
-Since hash tables rely on hash functions that can be applied to keys, both the implementation and specification of the hash tables are parameterized with a \texttt{Hashable}, which specifies a hash function and a set of valid keys used. The definition of the \texttt{Hashable} type is shown in Figure~\ref{fig:hashable}. It defines two program function \texttt{equalf} and \texttt{hashf}, which decide equality on keys and compute the hash function respectively. It also defines a logical type \texttt{Key} and a function \texttt{Hash}. Program values are related to logical \texttt{Keys} by the function \texttt{as\_key}. The set of valid keys is thus defined as the values $v$ for which $\mathtt{as\_key} \ v = \mathtt{Some} \ k$. This approach is slightly different from the approach used in the CFML specification \cite{pottier-cpp-17}. Since program values in CFML are typed, it is not necessary to introduce a separate logical key type, as the set of valid keys is already defined by the key type in the program language. The approach used here, however, allows the valid keys to be any set expressible in Coq, rather than being restricted to the types of programming languages such as OCaml. Note that \texttt{as\_key} is not required to be injective for the set of valid keys. Thus multiple distinct program values may map to the same logical key. If this is the case, then an equivalence relation is induced on the set of valid keys in the language, such that each logical key defines an equivalence class.
-
-\thoughts{While I did not think of it at the time, an alternative to introducing a Key type would be to simply introduce an \texttt{is\_key : val -> Prop} predicate. The logical Hash function would then have type \texttt{(k : val) -> is\_key k -> nat} and the model would have type \texttt{forall k, is\_key k -> list val}. I do not know if this approach is any better or worse. My guess is that it would not make much difference as it is easy to convert between the two representations (\texttt{is\_key k := is\_Some (as\_key k)} or \texttt{Key := \{k | is\_key k\}}). The only real difference is that the approach with logical keys requires that the function \texttt{as\_key} can decide if a key is valid, while the other approach does not need this property to be decidable in general (though the client will still need to prove that all inserted keys are valid when using the table).}
+The field \texttt{table\_in\_state} declared by the interface for the module is instantiated by the \texttt{TableInState} predicate, whose definition is shown in Figure~\ref{fig:table_in_state}. The proposition \texttt{TableInState M data t} states that the program value \texttt{t} is a table representing the dictionary modeled by \texttt{M} and that \texttt{data} is a representation of the current state of the table. The \texttt{data} state argument allows specification to state whether an operation changes the state of the table. Specifically, if an operation has a specification with the proposition \texttt{TableInState M data t} as both the precondition and the postcondition, then that operation does not change the state of the table (or at least it restores the table to the state it was in at the beginning of the operation). On the other hand, if the may change the state of the table, then the specification will state \texttt{TableInState M data' t} in the postcondition for some new state \texttt{data'}.
 
 \begin{figure}
 \begin{minted}{coq}
-  Structure Hashable := mkHashable {
-    equalf : val;
-    hashf : val;
-                            
-    Key : Type;
-    key_eq : EqDecision Key;
-    Hash : Key -> nat;
-    as_key : val -> option Key;
-
-    equal_spec (k1 k2: Key) (v1 v2: val) :
-      as_key v1 = Some k1 -> as_key v2 = Some k2 ->
-      WP equalf v1 v2 {{u, ⌜u = #(bool_decide (k1 = k2))⌝}};
-
-    hash_spec k v : as_key v = Some k -> WP hashf v {{u, ⌜u = #(Hash k)⌝}};
-  }.
-\end{minted}
-\caption{Definition of the \texttt{Hashable} type}
-\label{fig:hashable}
-\end{figure}
-
-Since a hash table represents of a dictionary, our specification will rely on a predicate relating a table to an abstract model of a dictionary. For this model, we will use Coq values of type \texttt{Key -> list val} (since we allow multiple values to be stored under the same key, we map to lists of values).
-
-\subsection{Table invariant}
-The proposition \texttt{Table M t}, whose definition is shown in Figure~\ref{fig:table_inv}, states that \texttt{t} is a table representing the dictionary modeled by \texttt{M}. The proposition \texttt{TableInState M D data t} states the same, but additionally claims that \texttt{data} is a representation of the current state of the table. This distinction is used in specifications to indicate whether a given operation alters the state of the table. Specifically, if an operation has a specification with the proposition \texttt{TableInState M D data t} as both a precondition and a postcondition, then that operation does not change the state of the table (or at least it restores the table to the state it was in at the beginning of the operation). On the other hand, if the specification only states \texttt{Table M t} in the postcondition, then it only promises to return the table in \emph{some} valid state.
-
-\begin{figure}
-\begin{minted}{coq}
-    Definition TableInState M D data t : iProp Σ:=
-      ⌜length data > 0⌝ ∗
-      ⌜content M data⌝ ∗
-      ⌜no_garbage data⌝ ∗
-      ⌜have_keys data⌝ ∗
-      ⌜is_domain D M⌝ ∗
-      ∃ lArr lSize lCap arr,
-        ⌜t = (#lArr, #lSize, #lCap)⌝ ∗
-        array arr (bucket <$> data) ∗
-        lArr ↦ arr ∗
-        lSize ↦ #(population D M) ∗
-        lCap ↦ #(length data).
-
-    Definition Table M (t : val) : iProp Σ :=
-      ∃ D data, TableInState M D data t.
+  Definition TableInState M data t : iProp Σ :=
+    ⌜length data > 0⌝ ∗
+    ⌜content M data⌝ ∗
+    ⌜no_garbage data⌝ ∗
+    ⌜have_keys data⌝ ∗
+    ∃ lArr lSize lCap arr,
+      ⌜t = (#lArr, #lSize, #lCap)⌝ ∗
+      array arr (bucket <$> data) ∗
+      lArr ↦ arr ∗
+      lSize ↦ #(population M) ∗
+      lCap ↦ #(length data).
 \end{minted}
 \caption{Definition of the table invariant}
-\label{fig:table_inv}
+\label{fig:table_in_state}
 \end{figure}
 
-The \texttt{data} argument represents the data stored in the internal array of the hash table. It has type \texttt{list BucketData}, where \texttt{BucketData} is defined as \texttt{list (val * val)}, i.e. it represents a bucket as a Coq list of key-value pairs (note that we store the concrete value used as key rather than the corresponding \texttt{Key}). Let us take a look at the definition of \texttt{TableInState} in Figure~\ref{fig:table_inv}. Overall, there are two parts to the definition. The first part consists entirely of pure Coq level statements about the model \texttt{M} and the content of the array \texttt{data}. The last part states that the value \texttt{t} has the correct form, i.e. it is a triple of locations and the locations point to an array containing \texttt{bucket <\$> data} (\texttt{bucket} is a function mapping a \texttt{BucketData} object to the program value representation of that bucket), the population count of the dictionary, and the length of the array respectively. Going back to the first part, we see that it consists of five assertions. It should be obvious what \texttt{length data > 0} means. The other four are summarized here:
+The \texttt{data} argument represents the data stored in the internal array of the hash table. It has type \texttt{list BucketData}, which instantiates the \texttt{table\_state} field of the interface. The type \texttt{BucketData} is defined as \texttt{list (val * val)}, i.e. it represents a bucket as a Coq list of key-value pairs (note that we store the concrete value used as key rather than the corresponding \texttt{Key}). Let us take a look at the definition of \texttt{TableInState} in Figure~\ref{fig:table_in_state}. Overall, there are two parts to the definition. The first part consists entirely of pure Coq level statements about the model \texttt{M} and the content of the array \texttt{data}. The last part states that the value \texttt{t} has the correct form, i.e. it is a triple of locations and the locations point to an array containing \texttt{bucket <\$> data} (\texttt{bucket} is a function mapping a \texttt{BucketData} object to the program value representation of that bucket), the population count of the dictionary, and the length of the array respectively. Going back to the first part, we see that it consists of four assertions. It should be obvious what \texttt{length data > 0} means. The other three are summarized here:
 \begin{itemize}
 \item The proposition \texttt{content M data} states that \texttt{data} contains the right values in the right buckets as required by \texttt{M}.
 \item The proposition \texttt{no\_garbage data} states that no keys are stored in the wrong buckets.
 \item The proposition \texttt{have\_keys data} states that \texttt{data} contains only valid keys.
-\item The proposition \texttt{is\_domain D M} states that the finite set of \texttt{Key}'s \texttt{D} is a domain of \texttt{M}, i.e. \texttt{M} maps all keys not in \texttt{D} to \texttt{[]}. This proposition is not strictly needed, however, explicitly defining a domain makes it easier to define the \texttt{population} function.
 \end{itemize}
 
 \subsection{Specification of fold}
 \label{sec:fold_spec}
-The function \texttt{fold} iterates over all key-value pairs in a table applying a function provided by the user to each entry using an accumulator to pass on a value between entries. Specifically, it takes three arguments: A table \texttt{t}, an initial value \texttt{a} for the accumulator, and a function \texttt{f}, which, when applied to a key-value pair and an accumulator value, returns an updated value for the accumulator. The specification for \texttt{fold} is shown in Figure~\ref{fig:fold_spec}. The specification requires a user-provided predicate \texttt{I}, which is used as loop invariant. Specifically, at any point during iteration if, after visiting all entries in the sequence \texttt{seq}, the accumulator has value \texttt{a}, then the proposition \texttt{I seq a} holds. The client must prove that the invariant holds initially, i. e. \texttt{I [] a} holds for the initial accumulator \texttt{a}, and that applying \texttt{f} always updates the invariant. Note that the expected specification for \texttt{f} does not include \texttt{Table} nor \texttt{TableInState} as a precondition. Thus, \texttt{f} will not have any access to the table. An alternative specification could list \texttt{TableInState M D data t} as both a precondition and a postcondition. This would give \texttt{f} read-only access to the table -- or at least it would require that \texttt{f} leaves the table in the same state as it was given.
+The function \texttt{fold} iterates over all key-value pairs in a table applying a function provided by the user to each entry using an accumulator to pass on a value between entries. Specifically, it takes three arguments: A table \texttt{t}, an initial value \texttt{a} for the accumulator, and a function \texttt{f}, which, when applied to a key-value pair and an accumulator value, returns an updated value for the accumulator. The specification for \texttt{fold} is shown in Figure~\ref{fig:fold_spec}. The specification requires a user-provided predicate \texttt{I}, which is used as loop invariant. Specifically, if, at any point during iteration after visiting all entries in the sequence \texttt{seq}, the accumulator has value \texttt{a}, then the proposition \texttt{I seq a} holds. The client must prove that the invariant holds initially, i. e. \texttt{I [] a} holds for the initial accumulator \texttt{a}, and that applying \texttt{f} always updates the invariant. Note that the expected specification for \texttt{f} does not include \texttt{TableInState} as a precondition. Thus, \texttt{f} will not have any access to the table. An alternative specification could list \texttt{TableInState M data t} as both a precondition and a postcondition. This would give \texttt{f} read-only access to the table -- or at least it would require that \texttt{f} leaves the table in the same state as it was given.
 
 \thoughts{Should I just switch to that definition entirely? The no-access specification is easily derivable from the read-only specification.}
 
@@ -158,7 +197,7 @@ The possible sequences \texttt{seq} that \texttt{fold} may produce are described
 
 The order in which the elements are visited by \texttt{fold} is mostly unspecified. However, for any key mapped to more than one value in the model, the most recently inserted values associated with that key are visited first. In other words, for each key \texttt{k}, the internal order of the elements in \texttt{M k} is preserved in all permitted sequences. Other than this restriction, no guarantees are made about the order of the entries of permitted sequences.
 
-The \texttt{fold} function is implemented using two nested loops. The outer loop iterates over the array of buckets, and for each bucket it executes the inner loop, which visits each entry in the bucket. When proving the specification of the function, it must be shown that after each iteration of the inner or outer loop, the user provided invariant \texttt{I seq a} holds and that the sequence \texttt{seq} is permitted. Both \texttt{permitted} and \texttt{complete} are defined in terms of the \texttt{removal} predicate. The proposition \texttt{removal M seq M'} states that \texttt{M'} can be obtained from \texttt{M} by removing the elements in \texttt{seq} one at a time. The proposition \texttt{permitted M seq} is defined as \texttt{exists M', removal M seq M'}, while \texttt{complete M seq} is defined as \texttt{removal M seq (const [])}, where \texttt{const []} is a function that always return \texttt{[]} and thus represents the empty dictionary. Thus, whenever an entry is visited and added to the sequence, we need to come up with a model that can be obtained by removing said sequence from the original model. We do this by maintaining a simulated table. This table is initially identical to the actual table, and whenever an entry is visited, we remove that entry from the simulated table. When the function terminates, the simulated table will be empty. This is done by maintaining the invariant shown in Figure~\ref{fig:loop_inv}. This pure predicate holds at any point during \texttt{fold} in addition to the \texttt{TableInState} and user defined \texttt{I} invariants. It takes quite a lot of parameters. The first \texttt{M} and \texttt{data} are the model and representation of the bucket array of the actual table. These are the only parameters to remain constant between iterations. The \texttt{M'} and \texttt{data'} are the model and representation of the simulated table. The \texttt{i} parameter is the index for the outer loop and therefor also the index for the bucket currently being visited. During the $i$'th iteration the state of the $j$'th bucket of the simulated table is as follows for each index $j$:
+The \texttt{fold} function is implemented using two nested loops. The outer loop iterates over the array of buckets, and for each bucket it executes the inner loop, which visits each entry in the bucket. When proving the specification of the function, it must be shown that after each iteration of the inner or outer loop, the user provided invariant \texttt{I seq a} holds and that the sequence \texttt{seq} is permitted. Both \texttt{permitted} and \texttt{complete} are defined in terms of the \texttt{removal} predicate. The proposition \texttt{removal M seq M'} states that \texttt{M'} can be obtained from \texttt{M} by removing the elements in \texttt{seq} one at a time using \texttt{remove\_val}. The proposition \texttt{permitted M seq} is defined as \texttt{exists M', removal M seq M'}, while \texttt{complete M seq} is defined as \texttt{removal M seq ∅}. Thus, whenever an entry is visited and added to the sequence, we need to come up with a model that can be obtained by removing said sequence from the original model. We do this by maintaining a simulated table. This table is initially identical to the actual table, and whenever an entry is visited, we remove that entry from the simulated table. When the function terminates, the simulated table will be empty. This is done by maintaining the invariant shown in Figure~\ref{fig:loop_inv}. This pure predicate holds at any point during \texttt{fold} in addition to the \texttt{TableInState} and user defined \texttt{I} invariants. It takes quite a lot of parameters. The first \texttt{M} and \texttt{data} are the model and representation of the bucket array of the actual table. These are the only parameters to remain constant between iterations. The \texttt{M'} and \texttt{data'} are the model and representation of the simulated table. The \texttt{i} parameter is the index for the outer loop and therefor also the index for the bucket currently being visited. During the $i$'th iteration the state of the $j$'th bucket of the simulated table is as follows for each index $j$:
 \begin{itemize}
 \item If $j < i$, then the $j$'th bucket has been fully processed and is therefor empty.
 \item If $j = i$, then the $j$'th bucket is currently being processed. The sequence \texttt{bPref} contains the already visited entries from this bucket. In the simulated table this bucket contains the remaining entries.
@@ -188,39 +227,43 @@ The sequence \texttt{seq} contains the entries from previously visited buckets (
 With this invariant at hand, the proof of the specification boils down to showing that the invariant is maintained after each iteration of the loops, which is fairly straight forward.
 
 \subsection{Specification of cascade}
-The function \texttt{cascade} returns a cascade, which can be thought of as a stateless functional variant of an iterator \cite{Gamma:1995:DPE:186897}. It is a function which, when applied to the unit value, either returns a key-value pair and a new cascade, or returns \texttt{NONE} if there are no entries left. The specification for \texttt{cascade} is very straightforward: If \texttt{t} is a table, then \texttt{cascade t} maintains the table invariant and returns a cascade as stated by the \texttt{is\_cascade} predicate. The proposition \texttt{is\_cascade f seq M data t} states that \texttt{f} is a cascade for the table \texttt{t} in state \texttt{data} representing dictionary \texttt{M} and that the sequence of entries \texttt{seq} has already been produced. The user does not need to know how \texttt{is\_cascade} is defined. They only need to know the \texttt{is\_cascade\_spec} specification, which is shown in Figure~\ref{fig:cascade_spec} along with the specification for \texttt{cascade}. This specification assumes in the precondition that \texttt{f} is a cascade and that the associated table is in the same state as when \texttt{cascade} was called. The postcondition states that the table remains in that state and that one of the following two cases holds:
+The function \texttt{cascade} returns a cascade, which can be thought of as a stateless functional variant of an iterator \cite{Gamma:1995:DPE:186897}. It is a function which, when applied to the unit value, either returns a key-value pair and a new cascade, or returns \texttt{NONE} if there are no entries left. The specification for \texttt{cascade} is very straightforward: If \texttt{t} is a table, then \texttt{cascade t} maintains the table invariant and returns a cascade as stated by the \texttt{is\_cascade} predicate. The proposition \texttt{is\_cascade M f seq data t} states that \texttt{f} is a cascade for the table \texttt{t} in state \texttt{data} representing dictionary \texttt{M} and that the sequence of entries \texttt{seq} has already been produced. The user does not need to know how \texttt{is\_cascade} is defined. They only need to know the \texttt{is\_cascade\_spec} specification, which is shown in Figure~\ref{fig:cascade_spec} along with the specification for \texttt{cascade}. This specification assumes in the precondition that \texttt{f} is a cascade and that the associated table is in the same state as when \texttt{cascade} was called. The postcondition states that the table remains in that state and that one of the following two cases holds:
 \begin{itemize}
 \item The returned value is \texttt{NONE}, in which case the sequence \texttt{seq} already produced is complete.
 \item The returned value is \texttt{SOME (k, x, f')}, where \texttt{f'} is a new cascade for which the key-value pair \texttt{(k, x)} is added to the sequence of produced entries.
 \end{itemize}
-The definition uses the predicates \texttt{permitted} and \texttt{complete}, which are presented in \ref{sec:fold_spec}. It is also worth noting that \texttt{is\_cascade} is defined as a pure Coq predicate, which makes it persistent. This stems from the fact that cascades are stateless. Because of this, cascades can be shared and reused, though access to the table is needed whenever they are used.
+The definition uses the predicates \texttt{permitted} and \texttt{complete}, which are presented in \ref{sec:fold_spec}. 
+
+The \texttt{is\_cascade} predicate is parameterized with the state of the table \texttt{data} and the specification for the cascade requires that the table is in that same state when the cascade is used. This means that cascades are invalidated when the state of the table is changed as the specification no longer applies.
+
+It is also worth noting that \texttt{is\_cascade} is defined as a Coq predicate (i. e. as a \texttt{Prop}) rather than an Iris predicate (i. e. as an \texttt{iProp}), which makes it persistent when lifted to an Iris predicate. This stems from the fact that cascades are stateless. Because of this, cascades can be shared and reused, though access to the table is needed whenever they are used.
 
 \thoughts{Calling \texttt{is\_cascade} a pure predicate might be somewhat misleading. It is implemented as a pure predicate (i. e. using \texttt{Prop} rather than \texttt{iProp}), however, that is perhaps abusing the conversions in Coq a little. The definition actually contains some Iris propositions (Hoare triples), which are coerced to normal propositions. The whole thing is then lifted back to an \texttt{iProp} when used in the postconditions of the specs. An alternative would be to just keep the whole thing as an Iris predicate and explicitly prove that it is persistent. It probably will not make much difference in practice, to be honest, as the conversions are very easy to perform.}
 
 \begin{figure}
 \begin{minted}{coq}
-      Lemma cascade_spec M D data t:
-        {{{TableInState M D data t}}}
+      Lemma cascade_spec M data t:
+        {{{TableInState M data t}}}
           cascade t
-        {{{f, RET f; ⌜is_cascade f [] M data t⌝ ∗
-                     TableInState M D data t }}}.
+        {{{f, RET f; ⌜is_cascade M f [] data t⌝ ∗
+                     TableInState M data t }}}.
 
-      Lemma is_cascade_spec f seq M D data t:
-        is_cascade f seq M data t ->
-        {{{ TableInState M D data t }}}
+      Lemma is_cascade_spec f seq M data t:
+        is_cascade M f seq data t ->
+        {{{ TableInState M data t }}}
           f #()
         {{{v k x f' , RET v;
-           TableInState M D data t ∗
+           TableInState M data t ∗
            ((⌜v = NONEV⌝ ∗ ⌜complete M seq⌝) ∨
             (⌜v = SOMEV ((k, x), f')⌝ ∗
              ⌜permitted M (seq ++ [(k, x)])⌝ ∗           
-             ⌜is_cascade f' (seq ++ [(k, x)]) M data t⌝)) }}}.
+             ⌜is_cascade M f' (seq ++ [(k, x)]) data t⌝)) }}}.
 \end{minted}
 \caption{Specification for cascades and the \texttt{cascade} function}
 \label{fig:cascade_spec}
 \end{figure}
 
-Like \texttt{fold}, the cascades are implemented using two nested loops. The outer loop iterates over the array of buckets and for each bucket it executes the inner loop, which visits each entry in the bucket. However, unlike in \texttt{fold}, the loop is evaluated in a lazy fashion. Whenever the loop visits an entry, it suspends and returns, along with the entry, the rest of the loop as a continuation -- a lambda which, when applied, will resume the loop where it stopped. The returned continuation acts as the next cascade. The loop visits the entries in the same order as \texttt{fold} does. Because of this, the same invariant \texttt{fold\_loop\_inv}(see Figure~\ref{fig:loop_inv}) is used to prove the \texttt{permitted} and \texttt{complete} propositions in the specification for cascades. This is done by embedding the invariant into the \texttt{is\_cascade} predicate. The \texttt{is\_cascade} predicate (definition shown in Figure~\ref{fig:is_cascade}) uses existential quantification to define the current state of the loop, i. e. the index of the current bucket \texttt{i} and the remaining elements of the current bucket \texttt{b}, that have yet to be visited. The predicate makes two claims: The first claim is that the \texttt{cascade\_inv} predicate holds, which is essentially just a wrapper for the \texttt{fold\_loop\_inv} invariant. The second claim is that when applied, the cascade has the same behavior as \texttt{cascade\_next} applied to the table and the current state of the loop. The \texttt{cascade\_next} is used internally in the implementation of \texttt{cascade}. In can be thought of as a lambda lifted version of the cascades. In fact the cascades are simply implemented as lambda closures, whose bodies apply \texttt{cascade\_next}. The specification for \texttt{cascade\_next} is shown in Figure~\ref{fig:is_cascade}. The postcondition for this specification is identical to the one from \texttt{is\_cascade\_spec}, while the precondition uses the weaker \texttt{cascade\_inv} predicate over \texttt{is\_cascade}. Thus, using this specification, it is quite easy to show the specification for cascades given that cascades have the same behavior as \texttt{cascade\_next}.
+Like \texttt{fold}, the cascades are implemented using two nested loops. The outer loop iterates over the array of buckets and for each bucket it executes the inner loop, which visits each entry in the bucket. However, unlike in \texttt{fold}, the loop is evaluated in a lazy fashion. Whenever the loop visits an entry, it suspends and returns, along with the entry, the rest of the loop as a continuation -- a lambda which, when applied, will resume the loop where it stopped. The returned continuation acts as the next cascade. The loop visits the entries in the same order as \texttt{fold} does. Because of this, the same invariant \texttt{fold\_loop\_inv}(see Figure~\ref{fig:loop_inv}) is used to prove the \texttt{permitted} and \texttt{complete} propositions in the specification for cascades. This is done by embedding the invariant into the \texttt{is\_cascade} predicate. The \texttt{is\_cascade} predicate (definition shown in Figure~\ref{fig:is_cascade}) uses existential quantification to define the current state of the loop, i. e. the index of the current bucket \texttt{i} and the remaining elements of the current bucket \texttt{b}, that have yet to be visited. This is also where it becomes necessary to assume that the state of the table has not changed. The \texttt{fold\_loop\_inv} predicate is parameterized with the state \texttt{data} and in order to use the invariant to argue that the sequence produced is permitted, the table needs to be in state \texttt{data} as well. The \texttt{is\_cascade} predicate makes two claims: The first claim is that the \texttt{cascade\_inv} predicate holds, which is essentially just a wrapper for the \texttt{fold\_loop\_inv} invariant. The second claim is that when applied, the cascade has the same behavior as \texttt{cascade\_next} applied to the table and the current state of the loop. The \texttt{cascade\_next} is used internally in the implementation of \texttt{cascade}. In can be thought of as a lambda lifted version of the cascades. In fact the cascades are simply implemented as lambda closures, whose bodies apply \texttt{cascade\_next}. The specification for \texttt{cascade\_next} is shown in Figure~\ref{fig:is_cascade}. The postcondition for this specification is identical to the one from \texttt{is\_cascade\_spec}, while the precondition uses the weaker \texttt{cascade\_inv} predicate over \texttt{is\_cascade}. Thus, using this specification, it is quite easy to show the specification for cascades given that cascades have the same behavior as \texttt{cascade\_next}.
 
 \begin{figure}
 \begin{minted}{coq}
@@ -235,21 +278,108 @@ Like \texttt{fold}, the cascades are implemented using two nested loops. The out
           cascade_inv seq M data b i /\
           forall P Q, {{P}} cascade_next (bucket b) t #i {{Q}} -> {{P}} f #() {{Q}}.
 
-      Lemma cascade_next_spec seq M D data b i t:
+      Lemma cascade_next_spec seq M data b i t:
         cascade_inv seq M data b i ->
-        {{{ TableInState M D data t }}}
+        {{{ TableInState M data t }}}
           cascade_next (bucket b) t #i
           {{{v k x f' , RET v;
-             TableInState M D data t ∗
+             TableInState M data t ∗
              ((⌜v = NONEV⌝ ∗ ⌜complete M seq⌝) ∨
               (⌜v = SOMEV ((k, x), f')⌝ ∗
                ⌜permitted M (seq ++ [(k, x)])⌝ ∗           
-               ⌜is_cascade f' (seq ++ [(k, x)]) M data t⌝)) }}}.
+               ⌜is_cascade M f' (seq ++ [(k, x)]) data t⌝)) }}}.
 \end{minted}
 \caption{Definition of \texttt{is\_cascade} and specification for the internal function \texttt{cascade\_next}}
 \label{fig:is_cascade}
 \end{figure}
 
+\subsection{Entry invariants}
+\label{sec:table_inv}
+The model and the specifications for the hash tables makes no assumptions about the values stored in the table. Since the values are untyped in the language, it is possible to store any value in the table. This makes the tables very flexible, however, it also makes it difficult to say anything about the values stored in the table. Users may not always need this much flexibility, but may instead want to restrict the kind of values that a table is allowed to store. One way of doing this is to introduce a predicate that must be satisfied by each entry in the table. We here present a simple set of tools to support this. These tools only refer to the model and do not depend on the implementation or even the specifications of the hash table. Figure~\ref{fig:table_inv} shows the definition of the \texttt{table\_inv} predicate. The proposition \texttt{table\_inv P M} states that the predicate \texttt{P} is satisfied by each key-value pair in the table. The definition makes use of the \texttt{[∗ list]} syntax for separating conjunction of a predicate applied to each element of a list. The predicate \texttt{P} will usually at least require the values to have a certain syntactical form, which would correspond to them having a certain type in a typed language, though it is in no way limited to that. Since the predicate takes both a key and a value, it can express a relation between a value and the key under which it is stored. In addition, because \texttt{P} is an Iris predicate and \texttt{table\_inv} is defined using separating conjunction it is possible for \texttt{P} to assert ownership of some resources, in which case that same ownership will be asserted by \texttt{table\_inv}. In other words, it allows the table to own resources in addition to those required by the data structure itself. For instance, \texttt{P k v} could state that \texttt{v} is a resource handle while also asserting ownership of the resource associated with \texttt{v}. In that case \texttt{table\_inv P M} would state that \texttt{M} is a dictionary storing resource handles while also asserting ownership of all the resources associated with the stored handles.
+
+\begin{figure}
+\begin{minted}{coq}
+  Definition table_inv (P : Key -> val -> iProp Σ) M : iProp Σ :=
+    [∗ list] kv ∈ all_elements M, P (kv.1) (kv.2).
+
+  Lemma table_inv_empty P : table_inv P ∅.
+  
+  Lemma table_inv_insert P M k x:
+    table_inv P M ∗ P k x ⊣⊢
+    table_inv P (insert_val M k x).
+      
+  Lemma table_inv_removal P M seq M':
+    removal M seq M' ->
+    table_inv P M ⊣⊢
+    ([∗ list] kv ∈ seq, (∃ k, ⌜as_key (kv.1) = Some k⌝ ∗ P k (kv.2))) ∗
+    table_inv P M'.
+    
+  Lemma table_inv_complete P M seq:
+    complete M seq ->
+    table_inv P M ⊣⊢
+    [∗ list] kv ∈ seq, (∃ k, ⌜as_key (kv.1) = Some k⌝ ∗ P k (kv.2)).    
+\end{minted}
+\caption{Definition of \texttt{table\_inv\_complete} and related lemmas}
+\label{fig:table_inv}
+\end{figure}
+
+In addition to defining \texttt{table\_inv}, we also provide a few related lemmas, which are listed in Figure~\ref{fig:table_inv}. The \texttt{table\_inv\_empty} and \texttt{table\_inv\_insert} lemmas should be self explanatory. The \texttt{table\_inv\_removal} lemma states that \texttt{P k v} holds for each pair \texttt{(k, v)} in a possibly incomplete sequence of entries produced by one of the iteration operations. The \texttt{table\_inv\_complete} lemma is a corollary to \texttt{table\_inv\_removal} stating that the predicate holds for all entries in a complete sequence.
+
+\subsection{Sample client}
+To illustrate how the specifications for the hash table module can be used, we here present a simple client program that uses the module. The program creates a table, inserts a few numbers into the table, and finally sums up the numbers in the table using \texttt{fold}. Before we can write the program, however, we need a key type and a hash function to instantiate the table module. To keep things as simple as possible, we choose \texttt{nat}, Coqs type of natural numbers, as the key type. As hash function, we choose the identity function. Thus, the set of legal keys becomes the non-negative integer literals.
+
+\thoughts{TODO: Decide which font to use for lower case lambda in code snippets. Apparently the default monospace font includes capital greek letters but not lower case.}
+
+\begin{figure}
+\begin{minted}{coq}
+  Definition test_1 : expr :=
+    let: "t" := table_create table #10 in
+    table_insert table "t" #1 #1 ;;
+    table_insert table "t" #2 #2 ;;
+    let: "a" := ref #0 in      
+    table_fold table (λ: "k" "x" <>, "a" <- !"a" + "x") "t" #() ;;
+    !"a".
+\end{minted}
+\caption{Sample program. Here \texttt{table} is an object of type \texttt{Table} shown in Figure~\ref{fig:interface}.}
+\label{fig:test1}
+\end{figure}
+
+The program we will verify is shown in Figure~\ref{fig:test1}. The specification we wish to prove is quite simple: The program should return the value 3. In the proof of this specification, we apply the specifications for \texttt{table\_create}, \texttt{table\_insert}, and \texttt{table\_fold}. The first two are straightforward to use. For the \texttt{table\_fold} operation, however, we need to come up with a loop invariant. We choose the invariant \texttt{test\_1\_inv M l} defined in Figure~\ref{fig:test1_inv}. The invariant first states that all the values in the table are integers. This is expressed using the \texttt{table\_inv} predicate, presented in \ref{sec:table_inv}.\footnote{Strictly speaking, it is not necessary to state this as part of the invariant as we are dealing with a persistent predicate. However, in other applications, where non-persistent instances of \texttt{table\_inv} are used, it is necessary to include this in the loop invariant if the proof depends on it.} In addition, the invariant states that the location \texttt{l}, which will be instantiated by the location returned by the \texttt{ref \#0} expression in the program, points to an integer that is the result of summing up all the values visited so far.
+\begin{figure}
+\begin{minted}{coq}
+  Definition int_table : gmap nat _ -> iProp Σ :=
+    table_inv (fun _ v => ∃ (j : Z), ⌜v = #j⌝).
+    
+  Fixpoint int_val_sum (seq : list val) :=
+    match seq with
+    | [] => Some 0
+    |  #(LitInt x) :: seq => z ← int_val_sum seq ; Some (z + x)
+    | _ => None
+    end.
+
+  Definition test_1_inv M l seq _ : iProp Σ :=
+    int_table M ∗
+      ∃ i, ⌜int_val_sum (seq.*2) = Some i⌝
+           ∗ l ↦ #i.
+\end{minted}
+\caption{Invariant used for the application of \texttt{table\_fold}}
+\label{fig:test1_inv}
+\end{figure}
+
+With the invariant picked, the specification of \texttt{table\_fold} requires that we show that the loop invariant is updated in each iteration. In other words, we have to prove the lemma shown in Figure~\ref{fig:test1_inner}. Using the \texttt{table\_inv\_removal} lemma from Figure~\ref{fig:table_inv} to assert that the value of the currently visited entry is an integer, the proof becomes quite straight forward.
+\begin{figure}
+\begin{minted}{coq}
+ Lemma test_1_inner M l k x seq a:
+    permitted M (seq ++ [(k,x)]) ->
+    {{test_1_inv M l seq a}}
+      (λ: "k" "x" <>, #l <- !#l + "x") k x a 
+    {{v, test_1_inv M l (seq ++ [(k,x)]) v }}.
+\end{minted}
+\caption{Specification of the lambda given to \texttt{table\_fold} as required by \texttt{table\_fold\_spec}}
+\label{fig:test1_inner}
+\end{figure}
+
+\thoughts{I have two other sample clients. They are, however, very similar to the first one and the proofs involve no interesting ideas other than what has already been used in the first one. Should I bring them up here? I fear there may nothing worthwhile to say about them other than stating their existence.}
 
 \printbibliography
 
