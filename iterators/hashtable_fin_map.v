@@ -123,51 +123,7 @@ Section HashTable.
     
   
   Implicit Type M : map (list val).
- (* 
-  Inductive removal : map (list val) -> list (val * val) -> map (list val) -> Prop :=
-  | RemovalNil {M M'} : MEquiv M M' -> removal M [] M'
-  | RemovalCons {k k' x l M M' M''} :
-      as_key k = Some k' ->
-      head (lookup_all M k') = Some x ->
-      MEquiv M' (remove_val M k') ->
-      removal M' l M'' ->
-      removal M ((k, x) :: l) M''.
 
-  Instance removal_proper : Proper (MEquiv ==> (=) ==> MEquiv ==> (↔)) removal.
-  Proof.
-    intros M1 M2 HMeq seq? <- M1' M2' HMeq'.
-    assert (forall M1 M2 M1' M2', MEquiv M1 M2 -> MEquiv M1' M2' ->
-                                  removal M1 seq M1' -> removal M2 seq M2').
-    { clear dependent M1 M2 M1' M2'.
-      induction seq as [|? ? IH] ; intros M1 M2 M1' M2' HMeq HMeq' Hrem.
-      - inversion Hrem. constructor. congruence.
-      - inversion Hrem as [| ????? M']. simplify_eq. econstructor ; [done|by rewrite -HMeq..|].
-        by apply (IH M' _ M1').
-    }
-    split ; last symmetry in HMeq, HMeq' ; eauto.
-  Qed.       
-    
-  Lemma removal_app_1 M seq M' seq' M'':
-    removal M seq M' ->
-    removal M' seq' M'' ->
-    removal M (seq ++ seq') M''.
-  Proof.
-    intro HRem. induction HRem as [???Heq|] ; [by rewrite Heq | econstructor ; eauto].
-  Qed.
-  
-  Lemma removal_app_2 M M' seq seq' :
-    removal M (seq ++ seq') M' ->
-    exists M'', removal M seq M'' /\ removal M'' seq' M'. 
-  Proof.
-    revert M.
-    induction seq as [|[k x] seq IH].
-    - simpl. intros M ?. exists M. split. by constructor 1. assumption.
-    - simpl. intros M Hrem. inversion Hrem as [| ? k' ???????? Hrem']. simplify_eq.
-      specialize (IH (delete k' M) Hrem'). destruct IH as [M'' [Hseq Hseq']].
-      exists M''. split.
-      by econstructor. assumption.
-  Qed.
-  *)
   Definition BucketData := list (val * val).
 
   Fixpoint bucket (kvs : BucketData) : val :=
@@ -1016,7 +972,6 @@ Section HashTable.
     { apply lookup_lt_is_Some_2. apply mod_bound_pos. lia. assumption. }
     assert ((bucket <$> data) !! (Hash k' `mod` length data) = Some (bucket b)) as HBucket.
     { by rewrite list_lookup_fmap Hb. }
-    Check (array_load_spec _ _ _ _ HBucket).
     wp_apply (array_load_spec _ _ _ _ HBucket with "Harr").
     iIntros "Harr".
     assert (forall b, lookup_all M k' = snd <$> (bucket_filter k' b) ->

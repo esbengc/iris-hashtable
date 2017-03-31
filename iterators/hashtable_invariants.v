@@ -55,15 +55,6 @@ Section invariants.
 
   Global Instance table_inv_persistent: (forall k x, PersistentP (P k x)) -> PersistentP (table_inv P M).
   Proof. typeclasses eauto. Qed.
-  
-  Lemma insert_remove_val M k x:
-    MEquiv (remove_val (insert_val M k x) k) M.
-  Proof.
-    rewrite /remove_val /insert_val insert_insert /lookup_all lookup_insert /=.
-    intro k' ; unfold lookup_all ; destruct (decide (k = k')) as [<-|].
-    - destruct (M !! k) ; by rewrite lookup_insert.        
-    - by rewrite lookup_insert_ne.
-  Qed.
       
   Lemma table_inv_removal P M seq M':
     removal M seq M' ->

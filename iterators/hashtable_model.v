@@ -128,7 +128,17 @@ Section model.
     intros. do 2 rewrite app_assoc. f_equiv. apply Permutation_app_comm.
     assumption. reflexivity.
   Qed.
-    
+
+  
+  Lemma insert_remove_val M k x:
+    MEquiv (remove_val (insert_val M k x) k) M.
+  Proof.
+    rewrite /remove_val /insert_val insert_insert /lookup_all lookup_insert /=.
+    intro k' ; unfold lookup_all ; destruct (decide (k = k')) as [<-|].
+    - destruct (M !! k) ; by rewrite lookup_insert.        
+    - by rewrite lookup_insert_ne.
+  Qed.
+  
   Inductive removal : Map (list val) -> list (val * val) -> Map (list val) -> Prop :=
   | RemovalNil {M M'} : MEquiv M M' -> removal M [] M'
   | RemovalCons {k k' x l M M' M''} :
