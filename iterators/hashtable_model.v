@@ -138,6 +138,17 @@ Section model.
     - destruct (M !! k) ; by rewrite lookup_insert.        
     - by rewrite lookup_insert_ne.
   Qed.
+
+  Lemma lookup_insert_val M k x:
+    head (lookup_all M k) = Some x ↔ MEquiv (insert_val (remove_val M k) k x) M.
+  Proof.
+    split.
+    - rewrite /insert_val /remove_val /lookup_all insert_insert lookup_insert. intro HSome.
+      rewrite -(proj1 (hd_error_tl_repr _ _ _) (conj HSome eq_refl)).
+      intro k'. unfold lookup_all. destruct (decide (k = k')) as [<-|].
+      by rewrite lookup_insert. by rewrite lookup_insert_ne.
+    - intros <-. by rewrite /lookup_all /insert_val /remove_val lookup_insert.
+  Qed.
   
   Inductive removal : Map (list val) -> list (val * val) -> Map (list val) -> Prop :=
   | RemovalNil {M M'} : MEquiv M M' -> removal M [] M'
