@@ -411,10 +411,10 @@ Section hashtable.
     iIntros "_". by iApply "HΦ".
   Qed.
 
-    Lemma table_insert_spec2 N P k k' x t:
+    Lemma table_insert_spec2 N P Q k k' x t:
     as_key k' = Some k ->
-    {{{is_table_alt N P t ∗ ∀ M, P M -∗ P (insert_val M k x) }}}
-      table_insert t k' x {{{RET #(); True}}}.
+    {{{is_table_alt N P t ∗ ∀ M, P M -∗ P (insert_val M k x) ∗ Q }}}
+      table_insert t k' x {{{RET #(); Q}}}.
   Proof.
     iIntros (Hkey Φ) "[#HTable HPins] HΦ".
     iDestruct "HTable" as (arr refs locks γs) "[% [% [% [% [Hlocks HInv]]]]]".
@@ -467,14 +467,14 @@ Section hashtable.
     iDestruct (table_own_eq with "[$Hpart $Hauth]") as "%". simplify_eq.
     wp_store.
     iDestruct (table_own_update _ _ ((k', x)::b) with "Hauth Hpart") as ">[Hauth Hpart]".
-    iMod ("HClose" with "[-Hauth HΦ Hlocked]") as "_".
+    iDestruct ("HPins" with "HP") as "[HP HQ]". 
+    iMod ("HClose" with "[-Hauth HΦ Hlocked HQ]") as "_".
     {
       iFrame. iExists (insert_val M k x), (insert_data _ _ data k (k', x)). iFrame. iNext.
       iSplit. iPureIntro. eapply content_insert ; try first [done | apply _ | lia].
       iSplit. iPureIntro. by apply no_garbage_insert.
       iSplit. iPureIntro. by apply have_keys_insert.
       iSplit. iPureIntro. by rewrite /insert_data insert_length.
-      iSplitL "HP HPins". iApply ("HPins" with "HP").
       erewrite <-(take_drop_middle (insert_data _ _ _ _ _)).
       rewrite /insert_data take_insert ; last reflexivity.
       rewrite drop_insert ; last lia.
@@ -492,7 +492,8 @@ Section hashtable.
       apply mod_bound_pos ; [lia|done].
     }
     iModIntro. wp_lam.
-    wp_apply (release_spec with "[Hlocked Hauth]"). iFrame "Hlock Hlocked". eauto. done.
+    wp_apply (release_spec with "[Hlocked Hauth]"). iFrame "Hlock Hlocked".
+    eauto. iIntros. iApply ("HΦ" with "HQ").
    
     rewrite zip_with_length_l_eq take_length take_length ;
       try rewrite Hdata_refs //;
@@ -611,15 +612,17 @@ Section hashtable.
     head (f <$> l) = f <$> head l.
   Proof. by case l. Qed.
     
-  Lemma table_remove_spec2 N P P' k k' t:
+  Lemma table_remove_spec2 N P Q Q' k k' t:
     as_key k' = Some k ->
     {{{is_table_alt N P t ∗
+       (∀ M,
+         ⌜head (lookup_all M k) = None⌝ -∗ P M -∗ P M ∗ Q') ∗
        ∀ M x,
-         ⌜head (lookup_all M k) = Some x⌝ -∗ P M -∗ P (remove_val M k) ∗ P' k x}}}
+         ⌜head (lookup_all M k) = Some x⌝ -∗ P M -∗ P (remove_val M k) ∗ Q k x}}}
       table_remove t k'
-      {{{v x, RET v; ⌜v = NONEV⌝ ∨ (⌜v = SOMEV x⌝ ∗ P' k x)}}}.
+      {{{v x, RET v; ⌜v = NONEV⌝ ∗ Q' ∨ (⌜v = SOMEV x⌝ ∗ Q k x)}}}.
   Proof.
-    iIntros (HKey Φ) "[HTable HPrem] HΦ".
+    iIntros (HKey Φ) "[HTable [HQ' HQ]] HΦ".
     iDestruct "HTable" as (arr refs locks γs) "[% [% [% [% [#Hlocks #HInv]]]]]".
     rename_last Hrefs_γs. rename_last Hrefs_locks. simplify_eq.
     do 2 wp_lam. wp_proj. wp_lam. wp_proj. wp_lam.
@@ -654,9 +657,133 @@ Section hashtable.
     by erewrite lookup_zip_with, lookup_zip_with, Hr, Hb', Hγ.
     iDestruct (table_own_eq with "[$Hpart $Hauth]") as "%". simplify_eq.
     wp_load.
-    iMod ("HClose" with "[Harr HP HrPtr Hpart Hrbγs]") as "_".
+
+    iAssert (WP (rec: "go" "b"
+                 := match: "b" with
+                      InjL <> => InjL #()
+                    | InjR "kxb" =>
+                      let: "k'" := Fst (Fst "kxb") in
+                      let: "x" := Snd (Fst "kxb") in
+                      let: "b" := Snd "kxb" in
+                      if: (equalf k') "k'" then InjR ("x", "b")
+                      else match: "go" "b" with
+                             InjL <> => InjL #()
+                           | InjR "p" =>
+                             InjR (Fst "p", InjR ("k'", "x", Snd "p"))
+                           end
+                    end) (bucket b)
+                {{v,  ⌜(v = NONEV /\  head (bucket_filter _ _ Hash k b) = None) ∨
+                       (∃ k'' x b',
+                           head (bucket_filter _ _ Hash k b) = Some (k'', x) /\
+                           v = SOMEV (x, bucket b') /\
+                           b' = bucket_remove _ _ Hash k b)⌝}})%I as "Hloop".
+    { assert (Hsuff: b = [] ++ b) by done.
+      assert (Hpref: [] = bucket_filter _ _ Hash k []) by done.
+      revert Hsuff Hpref. generalize b at 2 3 4 5 6. generalize ([] : BucketData) at 1 3.
+      intros b'' b' Hsuff Hpref. iRevert (b'' Hsuff Hpref).
+      iInduction b' as [|[k'' x] b'] "IH".
+      - iIntros. wp_rec. wp_match. iFrame. by iLeft.
+      - iIntros (b'') "% %". rename_last Hpref. simplify_eq. simpl.
+        pose proof (proj1 (Forall_lookup _ _) HHKeys _ _ Hb') as HKeysb.
+        rewrite ->Forall_app, Forall_cons in HKeysb.
+        destruct HKeysb as [? [[k''' Hkey'] ?]].
+        wp_rec. wp_match. wp_proj. wp_proj. wp_lam. do 2 wp_proj. wp_lam. wp_proj. wp_lam.
+        wp_bind (equalf _ _). iApply wp_wand. by iApply equal_spec.
+        iIntros (?) "%". simplify_eq.
+        case_bool_decide.
+        + simplify_eq. wp_if. iPureIntro. right.
+          exists k'', x, b'.
+          rewrite /bucket_filter /filter /= decide_True ; last done.
+          rewrite decide_True ; eauto.
+        + assert (as_key k'' ≠ Some k).
+          rewrite Hkey'. injection. intros <-. contradiction.
+          wp_if. wp_bind ((rec: _ _ := _) _)%E. iApply (wp_wand with "[-]").
+          iApply ("IH" $! (b'' ++ [(k'', x)])).
+          iPureIntro. by rewrite -app_assoc.
+          iPureIntro. unfold bucket_filter in *. rewrite filter_app -Hpref /=.
+          by rewrite /filter /= decide_False. 
+          iIntros (?) "%". rename_last HInv.
+          decompose [and or ex] HInv. 
+          * simplify_eq. wp_match. rewrite /bucket_filter /filter /= decide_False ; eauto.
+          * simplify_eq/=. wp_match. do 2 wp_proj. iFrame. iRight. iPureIntro.
+            eexists _ , _ , ((_,_)::_).
+            rewrite /bucket_filter /filter /= decide_False ; last done.
+            rewrite decide_False ; eauto.
+    }    
+    assert (HlookupData: lookup_data _ Hash data k = b) by by rewrite /lookup_data Hdata_refs Hb'.
+    
+    case_eq (head (lookup_all M k)) ; [intros x Hx | intros HNone] ;
+      last iDestruct ("HQ'" with "[%] HP") as "[HP HQ']" ; try done.
+    all: iMod ("HClose" with "[Harr HP HrPtr Hpart Hrbγs]") as "_" ;
+      try (iDestruct ("Hrbγs" with "[$HrPtr $Hpart]") as "?" ; iFrame ; iExists M, data ; iFrame ; eauto).
+    all: iModIntro ; wp_bind ((rec: _ _ := _) (bucket _))%E ; iApply (wp_wand with "Hloop") ;
+      iIntros (?) "%" ; rename_last HInv ;
+      destruct HInv as [[-> Hhead] | [x' [k'' [? [Hhead [-> ->]]]]]].
+    
+    all: try rewrite (content_lookup_all _ _ _ _ _ _ _ Hcontent) fmap_head HlookupData Hhead /= in Hx.
+    all: try rewrite (content_lookup_all _ _ _ _ _ _ _ Hcontent) fmap_head HlookupData Hhead /= in HNone.
+    all: try discriminate.
+    - wp_lam. wp_match. wp_proj. wp_bind (_ <- _)%E.
+      iInv (N.@0) as "[Harr Hrest]" "HClose". clear dependent M data.
+      iDestruct "Hrest" as (M data) "[>% [>% [>% [>% [HP Hrbγs]]]]]".
+      rename_last Hdata_refs. rename_last HHKeys. rename_last HNG. rename_last Hcontent.
+      assert (is_Some (data !! (Hash k `mod` length refs))) as [b' Hb'].
+      { apply lookup_lt_is_Some. rewrite Hdata_refs.
+        apply mod_bound_pos. lia. done. }
+      rewrite -{1}(take_drop_middle _ _ _ Hb') -{6}(take_drop_middle _ _ _ Hr) -{3}(take_drop_middle _ _ _ Hγ).
+      repeat rewrite zip_with_app. repeat rewrite zip_with_cons.
+      iDestruct (big_sepL_app with "Hrbγs") as "[Htake Hdrop]".
+      iDestruct (big_sepL_cons with "Hdrop") as "[[HrPtr >Hpart] Hdrop]".
+      iDestruct (table_own_eq with "[$Hpart $Hauth]") as "%". simplify_eq.
+      wp_store.
+      iDestruct (table_own_update _ _ (bucket_remove _ _ Hash k b) with "Hauth Hpart") as ">[Hauth Hpart]".
+      iFrame. iDestruct ("HQ" with "[%] HP") as "[HP HQ]".
+      { assert (HlookupData: lookup_data _ Hash data k = b).
+        by rewrite /lookup_data Hdata_refs Hb'.
+        unfold lookup_all. destruct Hcontent as [HSome HNone]. case_eq (M !! k).
+        - intros l Hl. by rewrite (HSome _ _ Hl) HlookupData /= fmap_head Hhead.
+        - intros Hn. erewrite <-(fmap_nil snd). erewrite (HNone _ Hn).
+          by rewrite fmap_head HlookupData Hhead.
+      }
+      iMod ("HClose" with "[-Hauth HΦ Hlocked HQ]") as "_".
+      {
+        iFrame. iNext.
+        iExists (remove_val M k),
+        (<[Hash k mod length data := bucket_remove _ _ _ k (lookup_data _ _ data k)]>data).
+        iSplit. iPureIntro. eapply content_remove ; try first [done | apply _ | lia].
+        iSplit. iPureIntro. by apply no_garbage_remove.
+        iSplit. iPureIntro. by apply have_keys_remove.
+        iSplit. iPureIntro. by rewrite /insert_data insert_length.
+        erewrite <-(take_drop_middle (<[_ := _]> _)).
+        rewrite /insert_data take_insert ; last reflexivity.
+        rewrite drop_insert ; last lia.
+        rewrite -{13}(take_drop_middle _ _ _ Hr) -{6}(take_drop_middle _ _ _ Hγ).
+        repeat rewrite zip_with_app. repeat rewrite zip_with_cons.
+        rewrite big_sepL_app big_sepL_cons (_:length data = length refs) ; last done.
+        iFrame.
+        by rewrite zip_with_length_l_eq take_length take_length ;
+          try rewrite (_:length data = length refs) ;
+          try rewrite (_:length γs = length refs).
+        do 2 rewrite take_length. by rewrite(_:length data = length refs).
+        rewrite /insert_data /lookup_data Hdata_refs.
+        rewrite Hb' /= list_lookup_insert. done.
+        rewrite Hdata_refs. apply mod_bound_pos ; [lia|done].
+      }
+      iModIntro. wp_lam.
+      wp_apply (release_spec with "[Hlocked Hauth]"). iFrame "Hlock Hlocked". eauto.
+      iIntros "_". wp_lam. wp_proj. iApply "HΦ". eauto.
+      by rewrite zip_with_length_l_eq take_length take_length ;
+        try rewrite Hdata_refs ;
+        try rewrite Hrefs_γs.
+      do 2 rewrite take_length. rewrite Hdata_refs //.
+    - wp_lam. wp_match. wp_apply (release_spec with "[$Hlock $Hlocked Hauth]").
+      eauto. iIntros "_". wp_lam. iApply "HΦ". iLeft. eauto.
+      Unshelve. exact #().
+  Qed.
+   (* iMod ("HClose" with "[Harr HP HrPtr Hpart Hrbγs]") as "_".
     iDestruct ("Hrbγs" with "[$HrPtr $Hpart]") as "?". iFrame. iExists M, data. iFrame. eauto.
     iModIntro. wp_rec.
+
     iApply (wp_wand _ _
                     (fun v =>
                        ⌜(v = NONEV) ∨
@@ -698,7 +825,7 @@ Section hashtable.
     }
     iIntros (?) "%". rename_last HInv. destruct HInv as [-> | [k'' [x [? [Hhead [-> ->]]]]]]. 
     - wp_lam. wp_match. wp_apply (release_spec with "[$Hlock $Hlocked Hauth]").
-      eauto. iIntros "_". wp_lam. iApply "HΦ". eauto.
+      eauto. iIntros "_". wp_lam. iApply "HΦ". iLeft. eauto.
     - wp_lam. wp_match. wp_proj. wp_bind (_ <- _)%E.
       iInv (N.@0) as "[Harr Hrest]" "HClose". clear dependent M data.
       iDestruct "Hrest" as (M data) "[>% [>% [>% [>% [HP Hrbγs]]]]]".
@@ -753,17 +880,19 @@ Section hashtable.
         try rewrite (_:length γs = length refs).
       do 2 rewrite take_length. by rewrite(_:length data = length refs).
       Unshelve. exact #().
-  Qed.
+  Qed.*)
   
-  Lemma table_lookup_spec N P P' k k' t:
+  Lemma table_lookup_spec N P Q Q' k k' t:
     as_key k' = Some k ->
     {{{is_table_alt N P t ∗
+       (∀ M,
+          ⌜head (lookup_all M k) = None⌝ -∗ P M -∗ P M ∗ Q') ∗
        ∀ M x,
-         ⌜head (lookup_all M k) = Some x⌝ -∗ P M -∗ P M ∗ P' k x}}}
+         ⌜head (lookup_all M k) = Some x⌝ -∗ P M -∗ P M ∗ Q k x}}}
       table_lookup t k'
-      {{{v x, RET v; ⌜v = NONEV⌝ ∨ (⌜v = SOMEV x⌝ ∗ P' k x)}}}.
+      {{{v x, RET v; ⌜v = NONEV⌝ ∗ Q' ∨ (⌜v = SOMEV x⌝ ∗ Q k x)}}}.
   Proof.
-    iIntros (HKey Φ) "[HTable HPlook] HΦ".
+    iIntros (HKey Φ) "[HTable [HQ' HQ]] HΦ".
     iDestruct "HTable" as (arr refs locks γs) "[% [% [% [% [_ #Inv]]]]]".
     rename_last Hrefs_γs. rename_last Hrefs_locks. simplify_eq.
     do 2 wp_lam. wp_proj. wp_lam. wp_proj. wp_lam.
@@ -805,14 +934,14 @@ Section hashtable.
                 then InjR "x"
                 else "go" "b" end) 
           (bucket b)
-          {{ v, ⌜v = InjLV #()∨
+          {{ v, ⌜v = InjLV #() ∧ head (bucket_filter Σ Key Hash k b) = None ∨
                 (∃ x k'' : val,
                     v = InjRV x ∧
-                    hd_error (bucket_filter Σ Key Hash k b) = Some (k'', x))⌝ }})%I as "Hloop".
+                    head (bucket_filter Σ Key Hash k b) = Some (k'', x))⌝ }})%I as "Hloop".
     {
       assert (Hsuff: b = [] ++ b) by done.
       assert (Hpref: [] = bucket_filter _ _ Hash k []) by done.
-      revert Hsuff Hpref. generalize b at 2 3 4. generalize ([] : BucketData) at 1 3.
+      revert Hsuff Hpref. generalize b at 2 3 4 5. generalize ([] : BucketData) at 1 3.
       intros b'' b' Hsuff Hpref. iRevert (b'' Hsuff Hpref).
       iInduction b' as [|[k'' x] b'] "IH".
       - iIntros. wp_rec. wp_match. by iLeft.
@@ -838,7 +967,7 @@ Section hashtable.
           by rewrite /filter /= decide_False. 
           iIntros (?) "%". rename_last HInv.
           decompose [and or ex] HInv. 
-          * simplify_eq. eauto.
+          * simplify_eq. rewrite /bucket_filter /filter /= decide_False ; eauto.
           * simplify_eq. iPureIntro. right.
             eexists _ , _ .
             rewrite /bucket_filter /filter /= decide_False ; eauto. 
@@ -847,17 +976,18 @@ Section hashtable.
     by rewrite /lookup_data Hdata_refs Hb.
     
     case_eq (head (lookup_all M k)) ; [intros x Hx | intros HNone] ;
-      first iDestruct ("HPlook" with "[%] HP") as "[HP HP']" ; try done.
+      [iDestruct ("HQ" with "[%] HP") as "[HP HQ]" | iDestruct ("HQ'" with "[%] HP") as "[HP HQ']"] ; try done.
     all: iMod ("HClose" with "[Harr HP HrPtr Hpart Hrbγs]") as "_" ;
       try (iDestruct ("Hrbγs" with "[$HrPtr $Hpart]") as "?" ; iFrame ; iExists M, data ; iFrame ; eauto).
     all: iModIntro ; wp_lam ; iApply (wp_wand with "Hloop") ;
       iIntros (?) "%" ; rename_last HInv ;
-      destruct HInv as [-> | [x' [k'' [-> Hhead]]]] ; iApply "HΦ".
-    all : try by iLeft.
-    - rewrite (content_lookup_all _ _ _ _ _ _ _ Hcontent) fmap_head HlookupData Hhead /= in Hx.
-      injection Hx as ->. eauto.
-    - rewrite (content_lookup_all _ _ _ _ _ _ _ Hcontent) fmap_head HlookupData Hhead /= in HNone.
-      discriminate.
+      destruct HInv as [[-> Hhead] | [x' [k'' [-> Hhead]]]] ; iApply "HΦ".
+
+    all: try rewrite (content_lookup_all _ _ _ _ _ _ _ Hcontent) fmap_head HlookupData Hhead /= in Hx.
+    all: try rewrite (content_lookup_all _ _ _ _ _ _ _ Hcontent) fmap_head HlookupData Hhead /= in HNone.
+    all: try discriminate.
+    - injection Hx as ->. eauto.
+    - eauto. 
     Unshelve. all: exact #().
   Qed.
 
@@ -988,20 +1118,19 @@ Section hashtable.
      ⌜complete M seq /\
       forall k, i ≤ Hash k mod n -> M !! k = None⌝)%I.
 
-  Lemma table_fold_inv_init Q M D n :
-    (forall M M1 M2 D D1 D2,
-        M1 ⊥ₘ M2 -> M = M1 ∪ M2 ->
-        D1 ⊥ D2 -> D ≡ D1 ∪ D2 ->
-        Q M D ⊣⊢ Q M1 D1 ∗ Q M2 D2) ->
-    Q M D -∗ table_fold_inv Q ∅ [] n 0.
+  Lemma table_fold_inv_init Q n :
+    Proper (MEquiv ==> (≡) ==> (⊣⊢)) Q ->
+    Q ∅ ∅ -∗ table_fold_inv Q ∅ [] n 0.
   Proof.
-    intro HQsplit. iIntros "HQ". iSplit.
-    - assert  (Heq : {[ k | Hash k `mod` n < 0 ]} ≡ ∅).
-      { intro. split. rewrite ->elem_of_mkSet. lia. contradiction. }
-      rewrite (HQsplit _ ∅ M _ {[ k | Hash k `mod` n < 0 ]} D) ; first last.
+    intros HProper. iIntros "HQ". iSplit.
+    - rewrite (_ : {[ k | Hash k `mod` n < 0 ]} ≡ ∅) //.
+      intro. split. rewrite ->elem_of_mkSet. lia. contradiction.
+   (*   rewrite (HQsplit _ ∅ M _ {[ k | Hash k `mod` n < 0 ]} D) ; first last.
+      
+      
       rewrite Heq left_id //. rewrite Heq. apply disjoint_empty_l.
       rewrite left_id //. apply map_disjoint_empty_l.
-      iDestruct "HQ" as "[? ?]". iAssumption.
+      iDestruct "HQ" as "[? ?]". iAssumption. *)
     - iPureIntro. split. by constructor.
       intros. rewrite /lookup_all lookup_empty //.
   Qed.
@@ -1066,70 +1195,150 @@ Section hashtable.
         rewrite -(nth_lookup_Some _ _ [] _ Hb).
         apply of_bucket_no_garbage. done. lia.
   Qed.
-    
+
+  Definition cleanup_table M :=
+    omap (fun l => match l with [] => None | l => Some l end) M.
+
+  Lemma cleanup_table_MEquiv M :
+    MEquiv (cleanup_table M) M.
+  Proof.
+    intro k. rewrite /lookup_all lookup_omap. by destruct (M !! k) as [[|?]|].
+  Qed.
+
+  Lemma cleanup_table_lookup_all_None M k:
+    lookup_all M k = [] -> cleanup_table M !! k = None.
+  Proof. rewrite /lookup_all lookup_omap. by destruct (M !! k) as [[|?]|]. Qed.
 
   Lemma table_fold_spec N P (Q : Map (list val) -> set Key -> iProp Σ) I (f t a : val) :
+    Proper ((MEquiv) ==> (≡) ==> (⊣⊢)) Q ->
     (forall M M1 M2 D D1 D2,
         M1 ⊥ₘ M2 -> M = M1 ∪ M2 ->
         D1 ⊥ D2 -> D ≡ D1 ∪ D2 ->
+        (forall k, k ∉ D1 -> M1 !! k = None) ->
+        (forall k, k ∉ D2 -> M2 !! k = None) ->
         Q M D ⊣⊢ Q M1 D1 ∗ Q M2 D2) ->
     (□ ∀ M, P M -∗ P M ∗ Q M ⊤) -∗
     (∀ M D seq k x a,
         {{⌜permitted M (seq ++ [(k, x)])⌝ ∗ Q M D ∗ I seq a}}
           f k x a
         {{v, Q M D ∗ I (seq ++ [(k, x)]) v}}) -∗
-    {{{is_table_alt N P t ∗ I [] a}}} table_fold f t a {{{v M seq, RET v ; Q M ⊤ ∗ ⌜complete M seq⌝ ∗ I seq v}}}.
+    {{{is_table_alt N P t ∗ Q ∅ ∅ ∗ I [] a}}}
+      table_fold f t a
+    {{{v M seq, RET v ; Q M ⊤ ∗ ⌜complete M seq⌝ ∗ I seq v}}}.
   Proof.
-    iIntros (HQsplit) "#HPQ #Hf !#".
-    iIntros (Φ) "[#HTable HI] HΦ".
+    iIntros (HProper HQsplit) "#HPQ #Hf !#".
+    iIntros (Φ) "[#HTable [HQ HI]] HΦ".
     iDestruct "HTable" as (arr refs locks γs) "[% [% [% [% [_ #Inv]]]]]".
     rename_last Hrefs_γs. rename_last Hrefs_locks. simplify_eq.
-    do 3 wp_lam. rewrite -inj_0. generalize 0 at 2, (@nil (val * val)) at 3 => i seq. Check wp_wand.
-    iApply (wp_wand _ ((rec: _ _ _ := _) _ _)
-                    (fun v => ∃ M, ⌜table_fold_inv M seq (length refs) i ⌝ ∗
-                                   Q M {[ k | Hash k mod (length refs) < i]} ∗
-                                   I seq v)%I with "[HI]").
-    {
-      iLöb as "IH" forall (a seq i).
-      - wp_rec. wp_lam. wp_proj. wp_op.
-        + intro. wp_if. wp_proj. wp_bind (_.[_])%E.
-          iInv (N.@0) as "[Harr Hrest]" "HClose".
-          assert (is_Some (locks !! i)) as [lk Hlk].
-          { apply lookup_lt_is_Some. lia. }
-          assert (is_Some (γs !! i)) as [γ Hγ].
-          { apply lookup_lt_is_Some. lia. }
-          assert (is_Some (refs !! i)) as [r Hr].
-          { apply lookup_lt_is_Some. lia. }
-          wp_apply (array_load_spec _ _ (#r, lk) with "Harr").
-          by rewrite lookup_zip_with list_lookup_fmap Hlk Hr.
-          iIntros "Harr". iMod ("HClose" with "[$Harr $Hrest]") as "_".
-          iModIntro. wp_proj. wp_bind (! _)%E.
-          iInv (N.@0) as "[Harr Hrest]" "HClose".
-          iDestruct "Hrest" as (M data) "[>% [>% [>% [>% [HP Hrbγs]]]]]".
-          rename_last Hdata_refs. rename_last HHKeys. rename_last HNG. rename_last Hcontent.
-          assert (is_Some (data !! i)) as [b Hb].
-          { apply lookup_lt_is_Some. lia. }
-          iDestruct (big_sepL_lookup_acc _ _ _ (r, b, γ) with "Hrbγs") as "[[HrPtr >Hpart] Hrbγs]".
-          by erewrite lookup_zip_with, lookup_zip_with, Hr, Hb, Hγ.
-          wp_load.
-          iDestruct ("HPQ" with "HP") as "[HP HQ]".
-          rewrite (HQsplit _ (of_bucket b)
-                           (M ∖ (of_bucket b)) _
-                           {[k | Hash k mod (length refs) = i ]}
-                           (⊤ ∖ {[k | Hash k mod (length refs) = i ]})) ; first last.
-          set_unfold. intro k. split ; [intros _|done].
-          destruct (decide (Hash k `mod` length refs = i)) ; eauto.
-          set_solver. symmetry. apply map_difference_union.
-          rewrite -(nth_lookup_Some _ _ [] _ Hb). apply of_bucket_subseteq ; assumption.
-          apply map_disjoint_difference_r.
-          rewrite -(nth_lookup_Some _ _ [] _ Hb). apply of_bucket_subseteq ; assumption.
-          rewrite elem_of_union elem_of_difference.
-          apply union_difference.
-            eauto using map_disjoint_difference_r, map_difference_union, of_bucket_subseteq.
+    do 3 wp_lam.
+    iDestruct (table_fold_inv_init Q (length refs) HProper with "HQ") as "HInv".
+    rewrite -inj_0.
+    generalize 0 at 2 3, (@nil (val * val)) at 3 4, (∅ : Map (list val)).
+    intros i seq M.
+    iLöb as "IH" forall (a seq i M) "HInv".
+    wp_rec. wp_lam. wp_proj. wp_op.
+    - intro. wp_if. wp_proj. wp_bind (_.[_])%E.
+      iInv (N.@0) as "[Harr Hrest]" "HClose".
+      assert (is_Some (locks !! i)) as [lk Hlk].
+      { apply lookup_lt_is_Some. lia. }
+      assert (is_Some (γs !! i)) as [γ Hγ].
+      { apply lookup_lt_is_Some. lia. }
+      assert (is_Some (refs !! i)) as [r Hr].
+      { apply lookup_lt_is_Some. lia. }
+      wp_apply (array_load_spec _ _ (#r, lk) with "Harr").
+      by rewrite lookup_zip_with list_lookup_fmap Hlk Hr.
+      iIntros "Harr". iMod ("HClose" with "[$Harr $Hrest]") as "_".
+      iModIntro. wp_proj. wp_bind (! _)%E.
+      iInv (N.@0) as "[Harr Hrest]" "HClose".
+      iDestruct "Hrest" as (M' data) "[>% [>% [>% [>% [HP Hrbγs]]]]]".
+      rename_last Hdata_refs. rename_last HHKeys. rename_last HNG. rename_last Hcontent.
+      assert (is_Some (data !! i)) as [b Hb].
+      { apply lookup_lt_is_Some. lia. }
+      iDestruct (big_sepL_lookup_acc _ _ _ (r, b, γ) with "Hrbγs") as "[[HrPtr >Hpart] Hrbγs]".
+      by erewrite lookup_zip_with, lookup_zip_with, Hr, Hb, Hγ.
+      wp_load.
+      iDestruct ("HPQ" with "HP") as "[HP HQ']".
+      rewrite -(HProper _ _ (cleanup_table_MEquiv M')  ⊤ ⊤ ) //
+        (HQsplit (cleanup_table M') (of_bucket b)
+                 (cleanup_table M' ∖ (of_bucket b)) _
+                 {[k | Hash k mod (length refs) = i ]}
+                 (⊤ ∖ {[k | Hash k mod (length refs) = i ]})) ; first last.
+      intros k HnotIn. apply lookup_difference_None. case_eq (of_bucket b !! k).
+      eauto. intro HNone. left. apply cleanup_table_lookup_all_None.
+      rewrite ->elem_of_difference, ->elem_of_top, ->(left_id _ and) in HnotIn.
+      assert (Decision (k ∈ {[ k0 | Hash k0 `mod` length refs = i ]})).
+      { destruct (decide (Hash k `mod` length refs = i)) ;
+          [apply left, elem_of_mkSet| apply right, not_elem_of_mkSet] ; done. }
+      apply dec_stable in HnotIn. rewrite ->elem_of_mkSet in HnotIn. 
+      rewrite (content_lookup_all _ _ _ _ _ _ _ Hcontent) /lookup_data Hdata_refs HnotIn Hb.
+      rewrite -of_bucket_bucket_filter HNone //.
+      intros k HnotIn. rewrite -(nth_lookup_Some _ _ [] _ Hb). apply of_bucket_no_garbage.
+      done. rewrite ->not_elem_of_mkSet, <-Hdata_refs in HnotIn. eauto.
+      set_unfold. intro k. split ; [intros _|done].
+      destruct (decide (Hash k `mod` length refs = i)) ; eauto.
+      set_solver. symmetry. apply map_difference_union.
+      rewrite -(nth_lookup_Some _ _ [] _ Hb). apply of_bucket_subseteq.
+      rewrite (content_proper _ _ _ _ _ _ (cleanup_table_MEquiv M')) //. assumption.
+      apply map_disjoint_difference_r.
+      rewrite -(nth_lookup_Some _ _ [] _ Hb). apply of_bucket_subseteq.
+      rewrite (content_proper _ _ _ _ _ _ (cleanup_table_MEquiv M')) //. assumption.
+      iDestruct "HQ'" as "[HQb _]". iDestruct "HInv" as "[HQ %]". rename_last HInv.
+      destruct HInv as [Hcom Hlookup].
+      iCombine "HQ HQb" as "HQ".
+      assert (M ⊥ₘ of_bucket b).
+      {
+        apply map_disjoint_alt. intro k.
+        destruct (decide (Hash k `mod` length refs = i)). left. apply Hlookup. lia.
+        right. rewrite -(nth_lookup_Some _ _ [] _ Hb).
+        apply of_bucket_no_garbage. assumption. rewrite Hdata_refs //.
+      }
+      rewrite -(HQsplit (M ∪ of_bucket b) _ _ {[ k | Hash k mod (length refs) < S i]}) ; last first.
+      intros k HnotIn. rewrite -(nth_lookup_Some _ _ [] _ Hb). apply of_bucket_no_garbage.
+      done. rewrite ->not_elem_of_mkSet, <-Hdata_refs in HnotIn. eauto.
+      intro. rewrite not_elem_of_mkSet. intro. apply Hlookup. lia.
+      intro. rewrite elem_of_union. do 3 rewrite elem_of_mkSet. lia.
+      rewrite elem_of_disjoint. intro. do 2 rewrite elem_of_mkSet. lia.
+      reflexivity. assumption.
+      iMod ("HClose" with "[Harr HP HrPtr Hpart Hrbγs]") as "_".
+      { iDestruct ("Hrbγs" with "[$HrPtr $Hpart]") as "?". iFrame. iExists M', data. iFrame. eauto. }
+      iModIntro. wp_lam. wp_bind ((rec: _ _ _ := _) _ _)%E.
+      assert (Hcom': complete (M ∪ of_bucket b) (seq ++ b)).
+      { apply (removal_app_1 _ _ (of_bucket b)). rewrite -{2}(left_id_L _ union (of_bucket b)).
+        apply removal_disjoint. apply Hcom. assumption.
+        apply map_disjoint_empty_l. apply of_bucket_complete.
+        eapply (proj1 (Forall_lookup _ _ ) HHKeys) ; done.
+      }
+      iApply (wp_wand _ ((rec: _ _ _ := _) _ _)%E
+                      (fun v => I (seq ++ b) v ∗
+                                Q (M ∪ of_bucket b) {[k | Hash k mod (length refs) < S i ]})%I
+                with "[HQ HI]").
+      + revert Hcom'. generalize b at 2 4 5 => b' Hcom'. clear Hb Hcom.
+        iInduction b' as [|[k x] b'] "IHb" forall (a seq Hcom').
+        * wp_rec. wp_lam. wp_match. rewrite (right_id_L _ app). iFrame.
+        * wp_rec. wp_lam. wp_match. repeat first [wp_proj| wp_lam].
+          wp_bind (f _ _ _).
+          iApply (wp_wand with "[-]").
+          iApply ("Hf" with "[$HI $HQ]"). iPureIntro.
+          rewrite cons_middle app_assoc in Hcom'. apply removal_app_2 in Hcom'.
+          destruct Hcom' as [? [Hrem _]]. eexists. apply Hrem.
+          iIntros (v) "[HQ HI]". wp_lam. rewrite (cons_middle _ _ b') app_assoc.
+          rewrite cons_middle app_assoc in Hcom'.
+          iApply ("IHb" with "[] HQ HI"). done.
+      + iIntros (v) "[HI HQ]". wp_lam. wp_op. rewrite (_: (i + 1)%Z = S i) ; last lia.
+        iApply ("IH" with "[$HQ] HI").
+        iPureIntro. split. assumption.
+        intros k Hk. apply lookup_union_None. split. apply Hlookup. lia.
+        rewrite -(nth_lookup_Some _ _ [] _ Hb).
+        apply of_bucket_no_garbage. assumption. rewrite Hdata_refs. lia.
+        iFrame.             
+    - intro. wp_if. iApply ("HΦ" with "[$HI HInv]"). iDestruct "HInv" as "[HQ %]".
+      rename_last HInv. destruct HInv. iFrame "%".
+      rewrite (_: {[ k | Hash k `mod` length refs < i ]} ≡ ⊤) //.
+      intro. rewrite elem_of_top elem_of_mkSet. split. done.
+      intro. destruct (decide (length refs = i)) as [<-|].
+      apply mod_bound_pos ; lia. trans (length refs). apply mod_bound_pos ; lia. lia.
+  Qed.
+           
           
-          iMod ("HClose" with "[Harr HP HrPtr Hpart Hrbγs]") as "_".
-          { iDestruct ("Hrbγs" with "[$HrPtr $Hpart]") as "?". iFrame. iExists M, data. iFrame. eauto. }
-          iModIntro. wp_lam.
           
-          *)
 End hashtable.
