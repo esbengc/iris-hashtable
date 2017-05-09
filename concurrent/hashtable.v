@@ -413,7 +413,7 @@ Section hashtable.
 
     Lemma table_insert_spec2 N P Q k k' x t:
     as_key k' = Some k ->
-    {{{is_table_alt N P t ∗ ∀ M, P M -∗ P (insert_val M k x) ∗ Q }}}
+    {{{is_table_alt N P t ∗ ∀ M, P M ={⊤∖↑N}=∗ P (insert_val M k x) ∗ Q }}}
       table_insert t k' x {{{RET #(); Q}}}.
   Proof.
     iIntros (Hkey Φ) "[#HTable HPins] HΦ".
@@ -467,7 +467,8 @@ Section hashtable.
     iDestruct (table_own_eq with "[$Hpart $Hauth]") as "%". simplify_eq.
     wp_store.
     iDestruct (table_own_update _ _ ((k', x)::b) with "Hauth Hpart") as ">[Hauth Hpart]".
-    iDestruct ("HPins" with "HP") as "[HP HQ]". 
+    iDestruct ("HPins" with "HP") as "HPins".
+    iDestruct (fupd_mask_mono _ (⊤ ∖ ↑N.@0) with "HPins") as ">[HP HQ]". solve_ndisj. 
     iMod ("HClose" with "[-Hauth HΦ Hlocked HQ]") as "_".
     {
       iFrame. iExists (insert_val M k x), (insert_data _ _ data k (k', x)). iFrame. iNext.
