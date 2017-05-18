@@ -3,23 +3,21 @@ From iris.base_logic Require Export big_op.
 From iris_programs.iterators Require Export hashtable_model.
 
 Section invariants.
-  Context `{Hashable Σ Key Hash}.
-  Context `{FinMap Key Map}.
+  Context {Σ Key Hash map} `{FinMap Key map, heapG Σ, !Hashable Σ Key Hash}.
   
-  Implicit Type M : Map (list val).
+  Implicit Type m : map (list val).
   
-  Definition table_inv (P : Key -> val -> iProp Σ) M : iProp Σ :=
-    ([∗ list] kv ∈ all_elements M, P (kv.1) (kv.2))%I.
+  Definition table_inv (P : Key -> val -> iProp Σ) m : iProp Σ :=
+    ([∗ list] kv ∈ all_elements m, P (kv.1) (kv.2))%I.
 
   Lemma table_inv_empty P : table_inv P ∅ .
     Proof. rewrite /table_inv /all_elements map_fold_empty. by iApply big_sepL_nil. Qed.
 
-  Lemma table_inv_insert P M k x:
-    table_inv P M ∗ P k x ⊣⊢
-    table_inv P (insert_val M k x).
+  Lemma table_inv_insert P m k x:
+    table_inv P m ∗ P k x ⊣⊢
+    table_inv P (insert_val m k x).
   Proof.
-
-    case_eq (M !! k).
+    case_eq (m !! k).
     - intros l Hl.
       rewrite /table_inv /all_elements /insert_val -insert_delete.
       rewrite (big_opL_permutation _ (map_fold _ _ (<[_:=_]>_))) ;
@@ -28,19 +26,19 @@ Section invariants.
       rewrite (big_opL_permutation _ (map_fold _ _ (<[_:=_]>_))) ;
         last apply (map_fold_insert Permutation) ; last apply lookup_delete.
       rewrite fmap_cons big_sepL_app big_sepL_app big_sepL_cons.
-      rewrite /lookup_all Hl.
+      rewrite Hl.
       iSplit ; iIntros "[[? ?] ?]" ; iFrame.
       all : try solve_proper.
       all : intros ; do 2 rewrite app_assoc ; f_equiv ; apply Permutation_app_comm.
     - intro HNone.
-      rewrite /table_inv /all_elements /insert_val /lookup_all HNone.
+      rewrite /table_inv /all_elements /insert_val HNone.
       rewrite (big_opL_permutation _ (map_fold _ _ (<[_:=_]>_))) ;
         last apply (map_fold_insert Permutation) ; last assumption.
       rewrite big_sepL_app big_sepL_singleton. iSplit ; iIntros "[? ?]" ; iFrame.
       solve_proper. intros ; do 2 rewrite app_assoc ; f_equiv ; apply Permutation_app_comm.
   Qed. 
 
-  Instance table_inv_proper P : Proper (MEquiv ==> (⊣⊢)) (table_inv P).
+(*  Instance table_inv_proper P : Proper (MEquiv ==> (⊣⊢)) (table_inv P).
   Proof.
     apply (MEquiv_proper _ (fun k l p => ([∗ list] x ∈ l, P k x) ∗ p)%I) ;[typeclasses eauto|solve_proper| |].
     - intros ? l??. rewrite /table_inv /all_elements.
@@ -52,26 +50,23 @@ Section invariants.
       solve_proper. intros ; do 2 rewrite app_assoc ; f_equiv ; apply Permutation_app_comm.
     - intros. rewrite big_sepL_nil. apply uPred.True_sep.
   Qed.
-
+*)
   Global Instance table_inv_persistent: (forall k x, PersistentP (P k x)) -> PersistentP (table_inv P M).
   Proof. typeclasses eauto. Qed.
-      
-  Lemma table_inv_removal P M seq M':
-    removal M seq M' ->
-    table_inv P M ⊣⊢ (([∗ list] kv ∈ seq, ∃ k, ⌜as_key (kv.1) = Some k⌝ ∗ P k (kv.2)) ∗ table_inv P M')%I.
+  
+  Lemma table_inv_removal P m seq m':
+    removal m seq m' ->
+    table_inv P m ⊣⊢ (([∗ list] kv ∈ seq, ∃ k, ⌜as_key (kv.1) = Some k⌝ ∗ P k (kv.2)) ∗ table_inv P m')%I.
   Proof.
-    pose proof insert_val_proper. pose proof removal_proper.
     intro HRem.
-    induction HRem as [?? Heq| k' k x seq M M' M'' HKey HHead Heq HRem IH].
-    - by rewrite big_sepL_nil uPred.True_sep Heq.
-    - assert (MEquiv M (insert_val M' k x)) as ->.
+    induction HRem as [| k' k x xs seq m m' HKey HHead HRem IH].
+    - by rewrite big_sepL_nil uPred.True_sep.
+    - assert (m = (insert_val (remove_val m k) k x)) as ->.
       { 
-        rewrite Heq /insert_val /remove_val {1}/lookup_all lookup_insert insert_insert /=.
-        rewrite -(_:lookup_all M k = x :: tail (lookup_all M k)).
+        apply map_eq.
         intro k''. destruct (decide (k = k'')) as [<-|].
-        by rewrite /lookup_all lookup_insert.
-        by rewrite /lookup_all lookup_insert_ne.  
-        by apply hd_error_tl_repr.
+        - rewrite /insert_val /remove_val HHead. destruct xs ; rewrite ?lookup_insert ?lookup_delete //.
+        - rewrite lookup_insert_val_ne // lookup_remove_val_ne //.
       }
       rewrite big_sepL_cons -table_inv_insert IH.
       iSplit ; iIntros "[[HP ?] ?]" ;  iFrame.
@@ -81,9 +76,9 @@ Section invariants.
         by injection HKey as ->.
   Qed.                    
   
-  Lemma table_inv_complete P M seq:
-    complete M seq ->
-    table_inv P M ⊣⊢ ([∗ list] kv ∈ seq, ∃ k, ⌜as_key (kv.1) = Some k⌝ ∗ P k (kv.2))%I.
+  Lemma table_inv_complete P m seq:
+    complete m seq ->
+    table_inv P m ⊣⊢ ([∗ list] kv ∈ seq, ∃ k, ⌜as_key (kv.1) = Some k⌝ ∗ P k (kv.2))%I.
   Proof.
     intro HCom. rewrite table_inv_removal ; last apply HCom.
     iSplit. iIntros "[? ?]". iFrame. iIntros. iFrame. iApply table_inv_empty.

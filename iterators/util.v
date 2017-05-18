@@ -140,6 +140,17 @@ Qed.
 Instance listset_nodup_dec_elem_of `{EqDecision A} x (C : listset_nodup A) : Decision (x ∈ C) :=
   elem_of_list_dec x (elements C).
  
+Lemma f_neq {A B} (f : A -> B) x y :
+ f x ≠ f y -> x ≠ y.
+Proof. intros Hf ?. apply Hf. f_equal. assumption. Qed.
 
+Lemma filter_app {A} (P : A -> Prop) `{∀ x, Decision (P x)} (l1 l2 : list A):
+  filter P (l1 ++ l2) = filter P l1 ++ filter P l2.
+Proof.
+  induction l1. reflexivity.
+  simpl. unfold filter, list_filter.
+  case_decide. list_simplifier. by f_equal.
+  done.
+Qed.
     
-    
+Ltac rename_last H' := match goal with [H : _ |- _] => rename H into H' end ; move H' at top.

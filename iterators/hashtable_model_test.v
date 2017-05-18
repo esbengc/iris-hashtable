@@ -1,6 +1,6 @@
 From stdpp Require Import gmap.
 From iris.program_logic Require Import hoare.
-From iris_programs.iterators Require Import hashtable_invariants.
+From iris_programs.iterators Require Import hashtable_invariants util.
 From iris.heap_lang Require Import proofmode.
 
 Section tests.
@@ -44,13 +44,13 @@ Section tests.
   Instance nat_hashable : Hashable Σ nat id :=
     {| equal_spec := equalf_spec ; hash_spec := idhash_spec  |}.
 
-  Parameter (table : Table Σ nat id (gmap nat)).
+  Parameter (table : table Σ nat id (gmap nat)).
 
-  Lemma insert_nat_spec M (state :table_state table) t (n : nat) x :
-    {{{ table_in_state M state t }}}
+  Lemma insert_nat_spec m (state :table_state table) t (n : nat) x :
+    {{{ table_in_state table m state t }}}
       table_insert table t #n x
       {{{ (state' : table_state table), RET #();
-          table_in_state (insert_val M n x) state' t}}}.
+          table_in_state table (insert_val m n x) state' t}}}.
   Proof.
     rewrite (_:Lit n = LitV n) ; last reflexivity.
     eapply table_insert_spec.
@@ -151,10 +151,10 @@ Section tests.
     iIntros (state') "HTable".
     wp_lam. wp_apply (insert_nat_spec _ _ _ 2 #2 with "HTable").
     iIntros (state'') "HTable".
-    wp_lam. wp_alloc a. wp_lam.
-    wp_apply (table_fold_spec _ _ _ (LamV "k" (λ: "x" <>, #a <- ! #a + "x")) _ #() with "[-]").
-    - intros. by eapply (test_1_inner _ _ ).
-    - iFrame. iSplit ; last eauto. rewrite /int_table. do 2 rewrite -table_inv_insert.
+    wp_lam. wp_alloc a as "Ha". wp_lam.
+    wp_apply (table_fold_spec _ _ _ _ (LamV "k" (λ: "x" <>, #a <- ! #a + "x")) _ #() with "[] [Ha $HTable]").
+    - iIntros. by iApply (test_1_inner _ _ ).
+    - iSplit ; last eauto. rewrite /int_table. do 2 rewrite -table_inv_insert.
       do 2 ( iSplit ; last eauto). iApply (table_inv_empty (Key:=nat)).
     - iIntros (v seq) "[% [HTable [_ HInv]]]".
       assert (HCom:complete (insert_val (insert_val ∅ 1%nat #1) 2%nat #2) seq) by assumption.
@@ -168,15 +168,15 @@ Section tests.
    Definition test_2 (t : val) : expr :=
     table_fold table (λ: <> "x" "a", "x" + "a")%V t #0.
   
-  Lemma test_2_spec M (state : table_state table) t :
-    {{{int_table M ∗ table_in_state M state t}}}
+  Lemma test_2_spec m (state : table_state table) t :
+    {{{int_table m ∗ table_in_state table m state t}}}
       test_2 t
-      {{{x, RET #x ; ⌜int_val_sum ((all_elements M).*2) = Some x⌝ ∗
-                     int_table M ∗ table_in_state M state t}}}.
+      {{{x, RET #x ; ⌜int_val_sum ((all_elements m).*2) = Some x⌝ ∗
+                     int_table m ∗ table_in_state table m state t}}}.
   Proof.
     iIntros (Φ) "[HiTab HTable] HΦ".
-    wp_apply (table_fold_spec _ _  (fun seq v => int_table M ∗ ∃ x, ⌜int_val_sum (seq.*2) = Some x⌝ ∗ ⌜v = #x⌝)%I with "[HTable HiTab]").
-    - intros k x seq a [? HRem].
+    wp_apply (table_fold_spec _ _ _ (fun seq v => int_table m ∗ ∃ x, ⌜int_val_sum (seq.*2) = Some x⌝ ∗ ⌜v = #x⌝)%I with "[] [$HTable HiTab]").
+    - iIntros (k x seq a) "%". rename_last HRem. destruct HRem as [? HRem].
       iIntros "!# [HiTab HInv]".
       iDestruct "HInv" as (x') "[% %]". iSimplifyEq.
       iDestruct (table_inv_removal _ _ _ _ HRem with "HiTab") as "[Hseq HiTabM']".
@@ -226,28 +226,27 @@ Section tests.
     iIntros (state'') "HTable".
     wp_lam. wp_alloc a. wp_lam.
     wp_apply (table_cascade_spec with "HTable").
-    set (M:=(insert_val (insert_val ∅ 1%nat #1) 2%nat #2)).
-    iIntros (c) "[% HTable]". assert (Hcas:is_cascade M c [] state'' t) ; first assumption.
+    set (m:=(insert_val (insert_val ∅ 1%nat #1) 2%nat #2)).
+    iIntros (c) "[#HCas HTable]".
     assert (Hloop: forall x seq,
                int_val_sum (seq.*2) = Some x ->
-               is_cascade M c seq state'' t ->
-               table_in_state  M state'' t -∗ a ↦ #x -∗
+               is_cascade table m c seq state'' t -∗
+               table_in_state table m state'' t -∗ a ↦ #x -∗
                WP (rec: "loop" "c" := match: "c" #() with
                                         NONE => ! #a
                                       | SOME "p" => #a <- ! #a + Snd (Fst "p") ;;
                                                     "loop" (Snd "p")
                                       end) c
-               {{ v, ⌜exists x seq, complete M seq /\ int_val_sum (seq.*2) = Some x /\ v = #x⌝ }}).
-    { clear Hcas.
-      intros i seq Hi Hcas. clear H.
-      iLöb as "IH" forall (c i seq Hi Hcas).
+               {{ v, ⌜exists x seq, complete m seq /\ int_val_sum (seq.*2) = Some x /\ v = #x⌝ }}).
+    { iIntros (i seq Hi) "#HCas".
+      iLöb as "IH" forall (c i seq Hi) "HCas".
       iIntros "HTable Ha".
-      wp_rec. wp_apply (is_cascade_spec with "HTable") ; first exact Hcas.
-      iIntros (? k x c') "[HTable [[% %]|[% [% %]]]]".
+      wp_rec. wp_apply (is_cascade_spec with "[$HCas $HTable]").
+      iIntros (? k x c') "[HTable [[% %]|[% [% #HCas']]]]".
       - simplify_eq. wp_match. wp_load. iPureIntro. exists i, seq. auto.
       - simplify_eq. simpl.
-        assert (permitted M (seq ++ [(k, x)])) as [M' HRem] ; first assumption.
-        iAssert (int_table M) as "HiTab".
+        assert (permitted m (seq ++ [(k, x)])) as [m' HRem] ; first assumption.
+        iAssert (int_table m) as "HiTab".
         { do 2 (iApply (table_inv_insert (Key:=nat)) ; iSplit ; last eauto).
           iApply (table_inv_empty (Key:=nat)).
         }
@@ -259,9 +258,11 @@ Section tests.
         iApply ("IH" $! _ (i + j)%Z (seq ++ [(k , #j)]) with "[] [] HTable Ha").
         by rewrite fmap_app int_val_sum_app Hi /=. done.
     }
-    iApply (wp_wand with "[-]"). by iApply (Hloop 0 [] with "HTable [-]").
+    iApply (wp_wand with "[-]"). by iApply (Hloop 0 [] with "HCas HTable [-]").
     iIntros (v) "%".
-    assert (∃ (x : Z) (seq : list (val * val)), complete M seq ∧ int_val_sum (seq.*2) = Some x ∧ v = #x) as [x [seq [Hcom [Hsum ->]]]] ; first assumption.
+    assert (∃ (x : Z) (seq : list (val * val)), complete m seq ∧ int_val_sum (seq.*2) = Some x ∧ v = #x) as [x [seq [Hcom [Hsum ->]]]] ; first assumption.
     rewrite (int_val_sum_complete _ _ Hcom) in Hsum.
     vm_compute in Hsum. injection Hsum as <-. done.
   Qed.
+
+End tests.

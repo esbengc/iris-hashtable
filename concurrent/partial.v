@@ -1,10 +1,11 @@
 From stdpp Require Export set fin_maps.
 From iris.algebra Require Export local_updates.
 From iris.base_logic Require Export base_logic.
+From iris_programs Require Export multiset.
 
 Close Scope Z_scope.
 
-Record multiset (A : Type) : Type := {multiset_car : A -> nat}.
+(*Record multiset (A : Type) : Type := {multiset_car : A -> nat}.
 
 Definition multiset_of_set {A} (X : set A) `{forall x, Decision (x ∈ X)} : multiset A :=
    {| multiset_car := fun x => if decide (x ∈ X) then 1 else 0|}.
@@ -186,7 +187,7 @@ Lemma elem_of_multiset_of_set {A} (X : set A) `{forall x, Decision (x ∈ X)} x 
 Proof.
   split; rewrite /multiset_of_set /(elem_of _ (multiset_of_set _)) /multiset_elem_of ; simpl
   ; [by case_decide| intro; rewrite decide_True //].
-Qed.
+Qed.*)
   
 Section cmra.
   Context {K V: Type} `{FinMap K M}.
@@ -589,6 +590,3 @@ Arguments partial_table : clear implicits.
 Arguments partial_tableC : clear implicits.
 Arguments partial_tableR _ _ _ {_ _ _ _ _ _ _ _ _}. 
 Arguments partial_tableUR _ _ _ {_ _ _ _ _ _ _ _ _}. 
-
-SubClass partial_table' (M : Type -> Type) (K V : Type): Type := (M (list V) * multiset K).
-Coercion PTCar_coer M K V : (partial_table' M K V) -> partial_table K V M := PTCar.

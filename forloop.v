@@ -1,6 +1,6 @@
-From iris.program_logic Require Import weakestpre.
-From iris.heap_lang Require Import proofmode notation.
-From iris.proofmode Require Import tactics.
+From iris.program_logic Require Export weakestpre.
+From iris.heap_lang Require Export proofmode notation.
+From iris.proofmode Require Export tactics.
 
 (** This definition is quite tricked in order to make the bind rule work. When
 having:
@@ -94,3 +94,27 @@ Proof.
       iIntros (i) "%" ; iApply "HLöb" ; iPureIntro ; lia.
       iApply ("HTemp" with "HPm") ; iPureIntro ; lia.
 Qed.    
+
+Lemma wp_for_tac `{heapG Σ} P E m n e j `{Closed [j] e}:
+  (m ≤ n)%Z ->
+  forall Φ, 
+  P m -∗
+     □(∀ (i : Z), ⌜m ≤ i < n⌝%Z -∗ P i -∗ ▷ WP (subst' j #i e) @ E {{_, P (1 + i)%Z}}) -∗
+     (∀ v, P n -∗ Φ v ) -∗
+     WP for: j := #m to #n do e @ E {{Φ}}.
+Proof.
+  intros. iIntros "HPm He HΦ".
+  iApply (wp_wand  with "[-HΦ]"). iApply (wp_for with "[] HPm He") ; [done|by wp_value]. eauto.
+Qed.
+
+
+Tactic Notation "wp_for" constr(P) "with" constr(Hs) :=
+  wp_apply (wp_for_tac P with Hs ++ " [] [-]" ) ;
+  [try solve [done | lia | eauto] | ..
+   |let i := fresh in
+    let v := fresh in
+    let Hi := iFresh' "Hi" in
+    let HP := iFresh' "HP" in
+    iIntros "!#" ; iIntros (i) [Hi ; HP] ; iNext ; simpl_subst ; iRevert (i) [Hi; HP] |iIntros (v)].
+
+Tactic Notation "wp_for" constr(P):= wp_for P with "[]".
