@@ -95,8 +95,8 @@ Section tests.
     destruct (int_val_sum seq') ; [simpl; f_equal; lia | reflexivity].
   Qed.
 
-  Lemma int_val_sum_complete M seq:
-    complete M seq -> int_val_sum (seq.*2) = int_val_sum ((all_elements M).*2).
+  Lemma int_val_sum_complete m seq:
+    complete m seq -> int_val_sum (seq.*2) = int_val_sum ((all_elements m).*2).
   Proof.
     intros HCom. pose proof (complete_all_elements _ _ HCom) as [seq' [Hseq <-]].
     f_equal.
@@ -110,8 +110,8 @@ Section tests.
     intros HF. inversion HF. simplify_eq. f_equal. by apply IH.
   Qed.
     
-  Definition test_1_inv M l (seq: list (val * val)) (_ : val) : iProp Σ :=
-    ( int_table M ∗
+  Definition test_1_inv m l (seq: list (val * val)) (_ : val) : iProp Σ :=
+    ( int_table m ∗
       ∃ i, ⌜int_val_sum (seq.*2) = Some i⌝
           ∗ l ↦ #i)%I.
   

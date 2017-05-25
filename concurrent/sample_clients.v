@@ -2,10 +2,11 @@ From stdpp Require Import gmap.
 From iris.heap_lang.lib Require Import par spin_lock.
 From iris_programs.iterators Require Import hashtable_invariants.
 From iris_programs.concurrent Require Import hashtable.
+From iris_programs Require Import array.
 
 Section clients.
 
-  Context Σ `{!heapG Σ, !Array Σ, !tableG Σ, !lockG Σ, !spawnG Σ}.
+  Context Σ `{!heapG Σ, !Array Σ, !lockG Σ, !spawnG Σ}.
 
   Definition equalf : val := λ: "x" "y", "x" = "y".
   Definition idf : val := λ: "x", "x".
@@ -42,18 +43,12 @@ Section clients.
   Qed.
 
   Instance nat_hashable : Hashable Σ nat id :=
-    {| equal_spec := equalf_spec ; hash_spec := idhash_spec  |}.
-
-  Variable modulo: val.
-  
-  Hypothesis modulo_spec:
-    forall (m n : Z), WP modulo (#m, #n) {{v, ⌜v = #(m `mod` n)⌝}}%I.
-  
+    {| equal_spec := equalf_spec ; hash_spec := idhash_spec  |}.  
   
   Definition test_1 : expr :=
     let: "t" := create_table _ spin_lock #10 in
     let: "x" := ref #() in
-    table_insert _ _ _ spin_lock modulo "t" #1 #1 ||| ("x" <- table_lookup _ _ _ modulo  "t" #1) ;;
+    table_insert _ _ _ spin_lock "t" #1 #1 ||| ("x" <- table_lookup _ _ _ "t" #1) ;;
     !"x".
 
   Ltac rename_last H' := match goal with [H : _ |- _] => rename H into H' end ; move H' at top.
@@ -62,23 +57,20 @@ Section clients.
     WP test_1 {{v, ⌜v = SOMEV #1 \/ v = NONEV⌝}}%I.
   Proof.
     unfold test_1.
-    wp_apply (create_table_spec2 _ nat id (gmap _) _ [] (table_inv (fun _ v => ⌜v = #1⌝)%I) 10).
+    wp_apply (create_table_spec _ nat id (gmap _) _ [] (table_inv (fun _ v => ⌜v = #1⌝)%I) 10).
     lia. iApply @table_inv_empty. iIntros (t).
     (* For some reason typeclass resolution fails at showing persistence so we have to do it manually *)
-    assert (PersistentP (is_table_alt Σ nat id (gmap _) spin_lock [] (table_inv (λ _ v, ⌜v = #1⌝)%I) t))
-      by apply is_table_alt_persistent.
+    assert (PersistentP (is_table Σ nat id (gmap _) spin_lock [] (table_inv (λ _ v, ⌜v = #1⌝)%I) t))
+      by apply is_table_persistent.
     iIntros "#Htable".
     wp_lam. wp_alloc x as "Hx". wp_lam. wp_bind ( _ ||| _)%E.
     iApply (wp_par (const True%I) (const (∃ v, x ↦ v ∗ ⌜v = SOMEV #1 \/ v = NONEV⌝)%I) with "[] [Hx]").
-    - wp_apply (table_insert_spec2 _ _ _ _ _ _ modulo_spec [] _ _ #1 #1 with "[$Htable ]").
-      reflexivity. iIntros. iApply (table_inv_insert (Key := nat)). eauto. done.
-    - wp_apply (table_lookup_spec _ _ _ _ _ _ modulo_spec [] _ (fun _ v => ⌜v = #1⌝%I) 1 #1 with "[$Htable ]").
-      reflexivity. iIntros (? ?) "% #Hinv". rename_last Hhead.
-      Existing Instance table_inv_proper.
-      rewrite <-(proj1 (lookup_insert_val _ _ _) Hhead).
-      iPoseProof "Hinv" as "HinvCpy". rewrite <-table_inv_insert at 2.
-      iDestruct "HinvCpy" as "[_ ?]". eauto.
-      iIntros (? ?) "Hv". wp_store. iDestruct "Hv" as "[% | [% %]]" ; simplify_eq ; eauto.
+    - wp_apply (table_insert_spec _ _ _ _ spin_lock [] _ _ _ #1 #1 with "[$Htable ]").
+      reflexivity. iIntros (?) "? !>". iSplitL. iApply (table_inv_insert (Key := nat)). eauto. done. eauto.
+    - wp_apply (table_lookup_spec _ _ _ _ _ [] _ (fun _ v => ⌜v = #1⌝%I) True%I 1 #1 with "[$Htable ]").
+      reflexivity. iSplit. eauto. iIntros (? ? ? Hhead) "#Hinv !>". iFrame "#".
+      rewrite table_inv_lookup //. iDestruct "Hinv" as "[? ?]". done.
+      iIntros (? ?) "Hv". wp_store. iDestruct "Hv" as "[[% _] | [% %]]"; simplify_eq ; eauto.
     - iIntros (? ?) "[_ Hx]". iDestruct "Hx" as (?) "[Hx %]". iNext. wp_lam. by wp_load.
   Qed.
 

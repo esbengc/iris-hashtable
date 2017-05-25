@@ -36,7 +36,42 @@ Section invariants.
         last apply (map_fold_insert Permutation) ; last assumption.
       rewrite big_sepL_app big_sepL_singleton. iSplit ; iIntros "[? ?]" ; iFrame.
       solve_proper. intros ; do 2 rewrite app_assoc ; f_equiv ; apply Permutation_app_comm.
-  Qed. 
+  Qed.
+
+  Lemma table_inv_remove P m k x xs:
+    m !! k = Some (x :: xs) ->
+    table_inv P m ⊣⊢
+              P k x ∗ table_inv P (remove_val m k).
+  Proof.
+    intro Hlookup.
+    rewrite /table_inv /all_elements /remove_val Hlookup.
+    destruct xs.
+    - rewrite -{1}(insert_id m k [x]) // -insert_delete (big_opL_permutation _ (map_fold _ _ (<[_:=_]>_))) ;
+        last apply (map_fold_insert Permutation) ; last apply lookup_delete.
+      done. solve_proper. intros. rewrite 2!app_assoc. f_equiv. apply Permutation_app_comm.
+    - rewrite -insert_delete (big_opL_permutation _ (map_fold _ _ (<[_:=_]>_))) ;
+        last apply (map_fold_insert Permutation) ; last apply lookup_delete.
+      rewrite -{1}(insert_id _ _ _ Hlookup) -insert_delete.
+      rewrite (big_opL_permutation _ (map_fold _ _ (<[_:=_]>_))) ;
+        last apply (map_fold_insert Permutation) ; last apply lookup_delete.
+      rewrite fmap_cons big_sepL_app big_sepL_app big_sepL_cons.
+      rewrite assoc //.
+      all : try solve_proper.
+      all : intros ; do 2 rewrite app_assoc ; f_equiv ; apply Permutation_app_comm.
+  Qed.
+      
+  Lemma table_inv_lookup P m k x xs:
+    m !! k = Some (x :: xs) ->
+    table_inv P m ⊣⊢
+              P k x ∗ (P k x -∗ table_inv P m).
+  Proof.
+    intro Hlookup. iSplit.
+    - iIntros "Hinv". rewrite (_:m = insert_val (<[k := xs]>m) k x). rewrite -table_inv_insert.
+      iDestruct "Hinv" as "[HInv $]". iIntros. iFrame.
+      rewrite /insert_val lookup_insert insert_insert insert_id //.
+    - iIntros "[HP HInv]". iApply "HInv". iFrame.
+  Qed.      
+         
 
 (*  Instance table_inv_proper P : Proper (MEquiv ==> (⊣⊢)) (table_inv P).
   Proof.

@@ -1812,6 +1812,7 @@ Definition hashtable Σ Key Hash map `{FinMap Key map , heapG Σ, !Hashable Σ K
   {| table_in_state_wf := HashTable.table_in_state_wf Σ Key Hash map ;
      table_insert_spec := HashTable.insert_impl_spec Σ Key Hash map;
      table_create_spec := HashTable.create_impl_spec Σ Key Hash map;
+     table_remove_spec := HashTable.remove_impl_spec Σ Key Hash map;
      table_lookup_spec := HashTable.lookup_impl_spec Σ Key Hash map;
      table_fold_spec := HashTable.fold_impl_spec Σ Key Hash map;
      table_cascade_spec := HashTable.cascade_impl_spec Σ Key Hash map;

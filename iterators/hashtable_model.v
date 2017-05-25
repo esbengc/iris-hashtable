@@ -341,6 +341,7 @@ End model.
 Structure table Σ key hash map `{FinMap key map, heapG Σ, !Hashable Σ key hash} : Type :=
   { table_create : val ;
     table_insert : val ;
+    table_remove : val ;
     table_lookup : val ;
     table_fold : val ;
     table_cascade : val ;
@@ -362,6 +363,15 @@ Structure table Σ key hash map `{FinMap key map, heapG Σ, !Hashable Σ key has
       {{{table_in_state m state t}}}
         table_insert t k x
         {{{state', RET #(); table_in_state (insert_val m k' x) state' t}}} ;
+
+    table_remove_spec m state t k k' :
+      as_key k = Some k' ->
+      {{{table_in_state m state t}}}
+        table_remove t k
+      {{{ state', RET match m !! k' with
+                      | Some (v :: _) => SOMEV v
+                      | _ => NONEV end ;
+          table_in_state (remove_val m k') state' t }}} ;
 
     table_lookup_spec m state t k k' :
       as_key k = Some k' ->
@@ -412,6 +422,7 @@ Structure table Σ key hash map `{FinMap key map, heapG Σ, !Hashable Σ key has
   }.
 Arguments table_create {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _.
 Arguments table_insert {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _.
+Arguments table_remove {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _.
 Arguments table_lookup {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _.
 Arguments table_fold {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _.
 Arguments table_cascade {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _.
@@ -422,6 +433,7 @@ Arguments table_in_state_wf {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _ _ _ _.
 Arguments is_cascade_persistent {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _ _ _ _ _ _.
 Arguments table_create_spec {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _ _ _.
 Arguments table_insert_spec {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _ _ _ _ _ _ _ _ _.
+Arguments table_remove_spec {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _ _ _ _ _ _ _ _.
 Arguments table_lookup_spec {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _ _ _ _ _ _ _ _.
 Arguments table_fold_spec {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _ _ _ _ _ _ _.
 Arguments is_cascade_spec {_ _ _ _ _ _ _ _ _ _ _ _ _ _ _} _ _ _ _ _ _ _.
