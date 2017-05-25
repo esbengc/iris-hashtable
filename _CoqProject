@@ -1,12 +1,16 @@
--R . iris_programs
-./subject-observer/subject-observer.v
+-R . iris_hashtable
+./array.v
+./conc_sample_clients.v
 ./forloop.v
-./iterators/util.v
-./iterators/hashtable_invariants.v
-./iterators/hashtable_model.v
-./iterators/hashtable_model_test.v
-./iterators/hashtable_test.v
-./iterators/hashtable.v
-./iterators/array.v
-./for_test.v
+./hashtable_buckets.v
+./hashtable_conc.v
+./hashtable_invariants.v
+./hashtable_model.v
+./hashtable_seq.v
+./modulo.v
+./multiset.v
+./partial_table.v
+./partial_table_specs.v
+./seq_sample_clients.v
+./util.v
 

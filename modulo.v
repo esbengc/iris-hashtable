@@ -1,6 +1,6 @@
 From iris.proofmode Require Export tactics.
 From iris.heap_lang Require Export lang notation proofmode.
-From iris_programs.iterators Require Import util.
+From iris_hashtable Require Import util.
 
 (* A simple implementation of the modulo function. *)
 

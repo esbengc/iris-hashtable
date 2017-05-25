@@ -1,6 +1,6 @@
 From iris.proofmode Require Import tactics.
 From iris.base_logic Require Export big_op.
-From iris_programs.iterators Require Export hashtable_model.
+From iris_hashtable Require Export hashtable_model.
 
 Section invariants.
   Context {Σ Key Hash map} `{FinMap Key map, heapG Σ, !Hashable Σ Key Hash}.
@@ -70,22 +70,8 @@ Section invariants.
       iDestruct "Hinv" as "[HInv $]". iIntros. iFrame.
       rewrite /insert_val lookup_insert insert_insert insert_id //.
     - iIntros "[HP HInv]". iApply "HInv". iFrame.
-  Qed.      
-         
-
-(*  Instance table_inv_proper P : Proper (MEquiv ==> (⊣⊢)) (table_inv P).
-  Proof.
-    apply (MEquiv_proper _ (fun k l p => ([∗ list] x ∈ l, P k x) ∗ p)%I) ;[typeclasses eauto|solve_proper| |].
-    - intros ? l??. rewrite /table_inv /all_elements.
-      rewrite (big_opL_permutation _ (map_fold _ _ (<[_:=_]>_))) ;
-        last apply (map_fold_insert Permutation) ; last assumption.
-      rewrite big_sepL_app. f_equiv.
-      induction l. by rewrite big_sepL_nil.
-      rewrite fmap_cons. do 2 rewrite big_sepL_cons. f_equiv. auto.
-      solve_proper. intros ; do 2 rewrite app_assoc ; f_equiv ; apply Permutation_app_comm.
-    - intros. rewrite big_sepL_nil. apply uPred.True_sep.
   Qed.
-*)
+  
   Global Instance table_inv_persistent: (forall k x, PersistentP (P k x)) -> PersistentP (table_inv P M).
   Proof. typeclasses eauto. Qed.
   

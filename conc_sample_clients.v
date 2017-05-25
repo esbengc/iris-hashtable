@@ -1,8 +1,6 @@
 From stdpp Require Import gmap.
 From iris.heap_lang.lib Require Import par spin_lock.
-From iris_programs.iterators Require Import hashtable_invariants.
-From iris_programs.concurrent Require Import hashtable.
-From iris_programs Require Import array.
+From iris_hashtable Require Import array hashtable_invariants hashtable_conc.
 
 Section clients.
 
@@ -50,8 +48,6 @@ Section clients.
     let: "x" := ref #() in
     table_insert _ _ _ spin_lock "t" #1 #1 ||| ("x" <- table_lookup _ _ _ "t" #1) ;;
     !"x".
-
-  Ltac rename_last H' := match goal with [H : _ |- _] => rename H into H' end ; move H' at top.
   
   Lemma test_1_spec:
     WP test_1 {{v, ⌜v = SOMEV #1 \/ v = NONEV⌝}}%I.

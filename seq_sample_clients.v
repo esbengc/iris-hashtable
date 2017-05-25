@@ -1,6 +1,6 @@
 From stdpp Require Import gmap.
 From iris.program_logic Require Import hoare.
-From iris_programs.iterators Require Import hashtable_invariants util.
+From iris_hashtable Require Import hashtable_invariants util.
 From iris.heap_lang Require Import proofmode.
 
 Section tests.

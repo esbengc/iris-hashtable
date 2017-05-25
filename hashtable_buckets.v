@@ -1,4 +1,4 @@
-From iris_programs.iterators Require Export hashtable_model.
+From iris_hashtable Require Export hashtable_model.
 
 Section buckets.
   Close Scope Z_scope.

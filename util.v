@@ -152,5 +152,32 @@ Proof.
   case_decide. list_simplifier. by f_equal.
   done.
 Qed.
-    
+
+Lemma sum_list_with_lookup `(f: A -> nat) l i x :
+  (l !! i) = Some x ->
+  f x ≤ sum_list_with f l.
+Proof.
+  revert i.
+  induction l as [|x' l IH] ; [done|].
+  intros [|i].
+  - simpl.
+    intro.
+    simplify_eq.
+    lia.
+  - simpl.
+    intro Hlookup.
+    pose proof (IH _ Hlookup).
+    lia.
+Qed.
+
+Lemma list_fmap_insert `(f: A -> B) (l : list A) i x :
+  f <$> (<[i := x]> l) = <[i := f x]> (f <$> l).
+Proof.
+  revert i.
+  induction l as [| y l' IH] ; [done|].
+  intros [|i] ; [done|].
+  csimpl.
+  by rewrite IH.
+Qed.
+
 Ltac rename_last H' := match goal with [H : _ |- _] => rename H into H' end ; move H' at top.
