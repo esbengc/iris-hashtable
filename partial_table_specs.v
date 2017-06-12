@@ -3,7 +3,7 @@ From iris.proofmode Require Import tactics.
 From iris.algebra Require Import auth.
 From iris.program_logic Require Import hoare.
 From iris.heap_lang.lib Require Import lock.
-From iris_hashtable Require Import array hashtable_conc partial_table util.
+From iris_hashtable Require Export array hashtable_conc partial_table util.
 
 Instance partial_table_auth_discrete M K `{FinMap K M} V : CMRADiscrete (authR (partial_tableUR K V M)).
 Proof. apply _. Qed.
@@ -13,7 +13,33 @@ Section derived.
   Variable lck : lock Σ.
   Definition partial_inv γ m : iProp Σ := own γ (● PTCar (m, ⊤)).
   Definition partial_own γ m d : iProp Σ := own γ (◯ PTCar (m, d)).
+  
+  Lemma partial_own_cut_table γ m d1 d2 :
+    partial_own γ m d1 ⊢
+    partial_own γ (cut_table d2 m) (d1 ∩ d2) ∗ partial_own γ (cut_table (d1 ∖ d2) m) (d1 ∖ d2).
+  Proof.
+    rewrite -own_op /partial_own -auth_frag_op. iIntros "Hown".
+    iDestruct (own_valid_r with "Hown") as "[Hown Hval]".
+    rewrite uPred.discrete_valid. iDestruct "Hval" as "%". rewrite -partial_table_op_cut_table //.
+  Qed.
 
+  Lemma partial_own_union γ m1 m2 d1 d2 :
+    partial_own γ m1 d1 ∗ partial_own γ m2 d2 ⊢ partial_own γ (m1 ∪ m2) (d1 ∪ d2).
+  Proof.
+    rewrite -own_op /partial_own -auth_frag_op. iIntros "Hown".
+    iDestruct (own_valid_r with "Hown") as "[Hown Hval]".
+    rewrite uPred.discrete_valid. iDestruct "Hval" as "%". rename_last Hval.
+    pose proof (partial_table_valid_op_map_disjoint _ _ _ _ Hval) as Hmdisj.
+    rewrite /op /cmra_op /= /ucmra_op /=.
+    case_decide.
+    - rename_last Hval. apply auth_own_valid in Hval.
+      rewrite (_:union_with (λ _ _, Some []) m1 m2 = m1 ∪ m2) //.
+      apply map_eq. intro k. rewrite 2!lookup_union_with. rewrite ->map_disjoint_alt in Hmdisj.
+      destruct (Hmdisj k) as [HNone|HNone] ; rewrite HNone //.        
+    - iDestruct (own_valid_r with "Hown") as "[Hown Hval]".
+      rewrite uPred.discrete_valid. iDestruct "Hval" as "%". done.
+  Qed.
+      
   Lemma own_partial_table_lookup γ m m' d k :
     k ∈ d ->
     (partial_inv γ m ∗ partial_own γ m' d → ⌜m !! k = m' !! k⌝)%I.

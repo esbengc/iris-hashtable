@@ -152,8 +152,9 @@ Section tests.
     wp_lam. wp_apply (insert_nat_spec _ _ _ 2 #2 with "HTable").
     iIntros (state'') "HTable".
     wp_lam. wp_alloc a as "Ha". wp_lam.
-    wp_apply (table_fold_spec _ _ _ _ (LamV "k" (λ: "x" <>, #a <- ! #a + "x")) _ #() with "[] [Ha $HTable]").
-    - iIntros. by iApply (test_1_inner _ _ ).
+    wp_apply (table_fold_spec _ _ _ _ (LamV "k" (λ: "x" <>, #a <- ! #a + "x")) _ #() with "[Ha $HTable]").
+    iSplitR.
+    - iIntros (????) "!# [% ?]". by iApply (test_1_inner _ _ ).
     - iSplit ; last eauto. rewrite /int_table. do 2 rewrite -table_inv_insert.
       do 2 ( iSplit ; last eauto). iApply (table_inv_empty (Key:=nat)).
     - iIntros (v seq) "[% [HTable [_ HInv]]]".
@@ -175,9 +176,8 @@ Section tests.
                      int_table m ∗ table_in_state table m state t}}}.
   Proof.
     iIntros (Φ) "[HiTab HTable] HΦ".
-    wp_apply (table_fold_spec _ _ _ (fun seq v => int_table m ∗ ∃ x, ⌜int_val_sum (seq.*2) = Some x⌝ ∗ ⌜v = #x⌝)%I with "[] [$HTable HiTab]").
-    - iIntros (k x seq a) "%". rename_last HRem. destruct HRem as [? HRem].
-      iIntros "!# [HiTab HInv]".
+    wp_apply (table_fold_spec _ _ _ (fun seq v => int_table m ∗ ∃ x, ⌜int_val_sum (seq.*2) = Some x⌝ ∗ ⌜v = #x⌝)%I with "[$HTable HiTab]"). iSplit ; last eauto.
+    - iIntros (k x seq a) "!# [% [HiTab HInv]]". rename_last HRem. destruct HRem as [? HRem].
       iDestruct "HInv" as (x') "[% %]". iSimplifyEq.
       iDestruct (table_inv_removal _ _ _ _ HRem with "HiTab") as "[Hseq HiTabM']".
       rewrite big_sepL_app big_sepL_singleton.
@@ -192,7 +192,6 @@ Section tests.
       + iExists (j + x')%Z. iSplit ; iPureIntro.
         rewrite fmap_app int_val_sum_app (_:int_val_sum (seq.*2) = Some x') /=; last assumption.
         f_equal. lia. reflexivity.
-    - eauto.
     - iIntros (v seq) "[% [HTable [HiTab HInv]]]".
       iDestruct "HInv" as (x) "[% %]". iSimplifyEq. iApply "HΦ".
       iSplit. by erewrite <-int_val_sum_complete. iFrame.

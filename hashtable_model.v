@@ -167,12 +167,13 @@ Structure table Σ key hash map `{FinMap key map, heapG Σ, !Hashable Σ key has
             table_in_state m state t }}} ;
     
     table_fold_spec m state I (f t a : val) :
-      ((∀ k x seq (a' : val),
-           ⌜permitted m (seq ++ [(k,x)])⌝ →
-           {{I seq a'}} f k x a' {{v, I (seq ++ [(k,x)]) v }}) →
-       {{{table_in_state m state t ∗ I [] a}}}
-         table_fold f t a
-       {{{v seq, RET v; ⌜complete m seq⌝ ∗ table_in_state m state t ∗ I seq v}}})%I ;
+      {{{(∀ k x seq (a' : val),
+              {{⌜permitted m (seq ++ [(k,x)])⌝ ∗I seq a'}}
+                f k x a'
+              {{v, I (seq ++ [(k,x)]) v }}) ∗
+         table_in_state m state t ∗ I [] a}}}
+        table_fold f t a
+      {{{v seq, RET v; ⌜complete m seq⌝ ∗ table_in_state m state t ∗ I seq v}}} ;
 
     is_cascade_spec m f seq state t:
       {{{ is_cascade m f seq state t ∗ table_in_state m state t }}}

@@ -1,10 +1,10 @@
 From stdpp Require Import gmap.
 From iris.heap_lang.lib Require Import par spin_lock.
-From iris_hashtable Require Import array hashtable_invariants hashtable_conc.
+From iris_hashtable Require Import array hashtable_invariants hashtable_conc partial_table_specs.
 
 Section clients.
 
-  Context Σ `{!heapG Σ, !Array Σ, !lockG Σ, !spawnG Σ}.
+  Context Σ `{!heapG Σ, !Array Σ, !lockG Σ, !spawnG Σ, !partialG (gmap nat) nat val Σ}.
 
   Definition equalf : val := λ: "x" "y", "x" = "y".
   Definition idf : val := λ: "x", "x".
@@ -70,4 +70,44 @@ Section clients.
     - iIntros (? ?) "[_ Hx]". iDestruct "Hx" as (?) "[Hx %]". iNext. wp_lam. by wp_load.
   Qed.
 
+  Definition test_2 : expr :=
+    let: "t" := create_table _ spin_lock #10 in
+    table_insert _ _ _ spin_lock "t" #1 #1 ||| table_insert _ _ _ spin_lock "t" #2 #2 ;;
+    (table_lookup _ _ _ "t" #1,  table_lookup _ _ _ "t" #2).
+
+  Instance odd_decision n : Decision (Odd n).
+  Proof.
+    case_eq (odd n). left. by apply odd_spec.
+    intro Hfalse. right. rewrite -odd_spec Hfalse //.
+  Qed.  
+
+  Lemma test_2_spec:
+    WP test_2 {{v, ⌜v = (SOMEV #1, SOMEV #2)%V⌝}}%I.
+  Proof.
+    unfold test_2. wp_bind (create_table _ _ _). iApply wp_wand.
+    iApply (partial_table_create_spec (gmap nat) nat Σ id spin_lock [] 10).
+    lia. iIntros (t) "Htable". iDestruct "Htable" as (γ) "Htable".
+    assert (PersistentP (is_table Σ nat id (gmap _) spin_lock [] (partial_inv (gmap nat) nat Σ γ) t))
+      by apply is_table_persistent.
+    iDestruct "Htable" as "[#Htable Hown]".
+    wp_lam. iDestruct (partial_own_cut_table _ _ _ _ _ _ {[n | Odd n]} with "Hown") as "[Hodd Heven]".
+    wp_bind (_ ||| _)%E.
+    iApply (wp_par (const (partial_own (gmap nat) nat Σ γ _ _))
+                   (const (partial_own (gmap nat) nat Σ γ _ _)) with "[Hodd] [Heven]").
+    - iApply (partial_table_insert_spec (gmap nat) _ _ _ _ [] _ _ _ 1 #1 #1 _ with "[$Htable $Hodd]").
+      done. rewrite /elem_of /multiset_elem_of /= decide_True //. by apply odd_spec.
+      iIntros "!> $".
+    - iApply (partial_table_insert_spec (gmap nat) _ _ _ _ [] _ _ _ 2 #2 #2 _ with "[$Htable $Heven]").
+      done. rewrite /elem_of /multiset_elem_of /= decide_False //. rewrite -odd_spec //.
+      iIntros "!> $".
+    - iIntros (? ?) "[Hodd Heven] !>". wp_lam. About partial_table_lookup_spec.
+      wp_apply (partial_table_lookup_spec _ _ _ _ spin_lock [] _ _ _ 1 #1 _ with "[$Htable $Hodd]").
+      done. rewrite /elem_of /multiset_elem_of /= decide_True // -odd_spec //.
+      iIntros "_".
+      wp_apply (partial_table_lookup_spec _ _ _ _ spin_lock [] _ _ _ 2 #2 _ with "[$Htable $Heven]").
+      done. rewrite /elem_of /multiset_elem_of /= decide_False // -odd_spec //.                                       iIntros "_". rewrite /insert_val 2?lookup_cut_table_elem_of ?lookup_insert. by wp_value.
+      rewrite /elem_of /multiset_elem_of /= decide_False // -odd_spec //.
+      rewrite /elem_of /multiset_elem_of /= decide_True // -odd_spec //.
+  Qed.
+  
 End clients.

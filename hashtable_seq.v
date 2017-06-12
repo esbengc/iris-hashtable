@@ -806,8 +806,9 @@ Section table.
     removal m seq m' ->
     removal m' b m'' ->
     ((∀ k x seq (a' : val),
-        ⌜permitted m (seq ++ [(k,x)])⌝ →
-        {{I seq a'}} f k x a' {{v, I (seq ++ [(k,x)]) v }}) →
+         {{⌜permitted m (seq ++ [(k,x)])⌝ ∗ I seq a'}}
+           f k x a'
+         {{v, I (seq ++ [(k,x)]) v }}) →
     {{{I seq a}}}
         fold_buck f (bucket b) a
         {{{ v, RET v; I (seq ++ b) v }}})%I.
@@ -841,7 +842,7 @@ Section table.
       wp_lam.
       wp_bind (f _ _ _ ).
       iApply (wp_wand with "[HInv]").
-      iApply ("Hf" with "[%] HInv"). exists (remove_val m' k'). assumption.
+      iApply ("Hf" with "[$HInv]"). iPureIntro. exists (remove_val m' k'). assumption.
       iIntros (v) "HInv". simpl.
       wp_lam.
       iApply ("IH" $! v (remove_val m' k') (seq ++ [(k, x)]) with "[%] [HInv] [-]"). done.
@@ -1007,8 +1008,9 @@ Section table.
   Lemma fold_loop_spec m m' seq I (f a t : val) data data' i :
     fold_loop_inv data m seq [] data' m' i  ->
     ((∀ k x seq (a' : val),
-        ⌜permitted m (seq ++ [(k,x)])⌝ →
-        {{I seq a'}} f k x a' {{v, I (seq ++ [(k,x)]) v }}) →
+         {{⌜permitted m (seq ++ [(k,x)])⌝ ∗ I seq a'}}
+           f k x a'
+         {{v, I (seq ++ [(k,x)]) v }}) →
      {{{table_in_state m data t ∗ I seq a}}}
       fold_loop #i f t a
      {{{seq' data'' m'' v , RET v; ⌜fold_loop_inv data m seq' [] data'' m'' (length data)⌝ ∗
@@ -1080,15 +1082,15 @@ Section table.
   
   
   Lemma fold_impl_spec m data I (f t a : val) :
-    ((∀ k x seq (a' : val),
-        ⌜permitted m (seq ++ [(k,x)])⌝ →
-        {{I seq a'}} f k x a' {{v, I (seq ++ [(k,x)]) v }}) →
-    {{{table_in_state m data t ∗ I [] a}}}
-      fold_impl f t a
-      {{{v seq, RET v; ⌜complete m seq⌝ ∗ table_in_state m data t ∗ I seq v}}})%I.
+    {{{(∀ k x seq (a' : val),
+             {{⌜permitted m (seq ++ [(k,x)])⌝ ∗I seq a'}}
+               f k x a'
+             {{v, I (seq ++ [(k,x)]) v }}) ∗
+        table_in_state m data t ∗ I [] a}}}
+       fold_impl f t a
+     {{{v seq, RET v; ⌜complete m seq⌝ ∗ table_in_state m data t ∗ I seq v}}}.
   Proof.
-    iIntros "#Hf !#".
-    iIntros (Φ) "[[% [% [% [% [% HTable]]]]] HI] HΦ".
+    iIntros (Φ) "[#Hf [[% [% [% [% [% HTable]]]]] HI]] HΦ".
     iDestruct "HTable" as (lArr lSize lCap arr) "[% [Harr [HlArr [HlSize HlCap]]]]".
     iSimplifyEq.
     do 3 wp_lam.
